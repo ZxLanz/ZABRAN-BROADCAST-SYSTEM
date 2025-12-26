@@ -1,24 +1,48 @@
-import makeWASocket, { useMultiFileAuthState } from "@whiskeysockets/baileys";
-import qrcode from "qrcode-terminal";
+// File: backend/config/whatsapp.js - State Management untuk WhatsApp
+let whatsappClient = null;
+let currentQrCode = null;
+let currentStatus = 'disconnected'; // 'disconnected', 'qrcode', 'connected', 'reconnecting', 'error'
 
-let sock;
-
-export async function startWhatsApp() {
-  const { state, saveCreds } = await useMultiFileAuthState("./session");
-
-  sock = makeWASocket({ auth: state, printQRInTerminal: true });
-
-  sock.ev.on("connection.update", ({ qr, connection }) => {
-    if (qr) qrcode.generate(qr, { small: true });
-    if (connection === "open") console.log("📱 WA Connected!");
-    if (connection === "close") console.log("❌ WA Disconnected!");
-  });
-
-  sock.ev.on("creds.update", saveCreds);
-
-  return sock;
+// Setter functions
+function setWhatsAppClient(client) {
+    whatsappClient = client;
 }
 
-export function getSocket() {
-  return sock;
+function setQrCode(qr) {
+    currentQrCode = qr;
 }
+
+function setStatus(status) {
+    currentStatus = status;
+    console.log(`📊 Status changed to: ${status}`);
+}
+
+function clearClientState() {
+    whatsappClient = null;
+    currentQrCode = null;
+    currentStatus = 'disconnected';
+    console.log('🗑️ Client state cleared.');
+}
+
+// Getter functions
+function getWhatsAppClient() {
+    return whatsappClient;
+}
+
+function getQrCode() {
+    return currentQrCode;
+}
+
+function getStatus() {
+    return currentStatus;
+}
+
+module.exports = {
+    setWhatsAppClient,
+    setQrCode,
+    setStatus,
+    clearClientState,
+    getWhatsAppClient,
+    getQrCode,
+    getStatus
+};

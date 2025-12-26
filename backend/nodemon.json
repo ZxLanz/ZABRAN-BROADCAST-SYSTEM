@@ -1,0 +1,28 @@
+{
+  "watch": [
+    "*.js",
+    "routes/**/*.js",
+    "config/**/*.js",
+    "models/**/*.js",
+    "utils/**/*.js"
+  ],
+  "ignore": [
+    "node_modules/**/*",
+    "auth_info_baileys/**/*",
+    ".wwebjs_auth/**/*",
+    ".wwebjs_cache/**/*",
+    "session/**/*",
+    "logs/**/*",
+    "uploads/**/*",
+    "temp/**/*",
+    "*.log",
+    "*.session.json",
+    "*.data.json"
+  ],
+  "ext": "js,json",
+  "delay": 2000,
+  "verbose": true,
+  "execMap": {
+    "js": "node"
+  }
+}

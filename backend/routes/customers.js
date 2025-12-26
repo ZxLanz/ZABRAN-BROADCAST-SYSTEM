@@ -1,80 +1,121 @@
-// backend/routes/customers.js
 const express = require('express');
 const router = express.Router();
 const { body, validationResult } = require('express-validator');
 const Customer = require('../models/Customer');
+const { authenticate } = require('../middleware/auth');
 
-/**
- * GET /api/customers
- * Get all customers with optional filters
- * Query params: status, tag, search, page, limit
- */
-router.get('/', async (req, res) => {
+// 🔔 IMPORT NOTIFICATION HELPERS
+const {
+  notifyCustomerAdded,
+  notifyCustomerImported,
+  notifyCustomerUpdated,
+  notifyCustomerDeleted
+} = require('../utils/notificationHelper');
+
+// PROTECT SEMUA ROUTE - WAJIB LOGIN
+router.use(authenticate);
+
+// GET STATS SUMMARY
+router.get('/stats/summary', async (req, res) => {
   try {
-    const { status, tag, search, page = 1, limit = 50 } = req.query;
-
-    // Build query
-    let query = {};
+    const { role, id: userId } = req.user;
     
-    if (status) {
-      query.status = status;
+    let filter = {};
+    if (role !== 'admin') {
+      filter = { createdBy: userId };
     }
     
-    if (tag) {
-      query.tags = tag;
-    }
+    const total = await Customer.countDocuments(filter);
+    const active = await Customer.countDocuments({ 
+      ...filter, 
+      status: 'active' 
+    });
+    const inactive = await Customer.countDocuments({ 
+      ...filter, 
+      status: 'inactive' 
+    });
+    const blocked = await Customer.countDocuments({ 
+      ...filter, 
+      status: 'blocked' 
+    });
     
-    if (search) {
-      query.$or = [
-        { name: new RegExp(search, 'i') },
-        { phone: new RegExp(search, 'i') },
-        { email: new RegExp(search, 'i') },
-        { company: new RegExp(search, 'i') }
-      ];
-    }
-
-    // Execute query with pagination
-    const skip = (page - 1) * limit;
-    const customers = await Customer.find(query)
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(parseInt(limit));
-
-    // Get total count
-    const total = await Customer.countDocuments(query);
-
+    console.log(`[${role.toUpperCase()}] Stats: ${total} total customers`);
+    
     res.json({
       success: true,
-      data: customers,
-      pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
+      data: {
         total,
-        pages: Math.ceil(total / limit)
+        active,
+        inactive,
+        blocked,
+        growthRate: '0%'
       }
     });
-
+    
   } catch (error) {
-    console.error('Get customers error:', error);
+    console.error('Error fetching stats:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to fetch customers'
+      message: 'Failed to fetch customer stats',
+      error: error.message
     });
   }
 });
 
-/**
- * GET /api/customers/:id
- * Get single customer by ID
- */
+// GET ALL CUSTOMERS - FILTERED BY USER
+router.get('/', async (req, res) => {
+  try {
+    const { role, id: userId } = req.user;
+
+    let filter = {};
+    
+    if (role === 'admin') {
+      filter = {};
+    } else {
+      filter = { createdBy: userId };
+    }
+
+    const customers = await Customer.find(filter)
+      .sort({ createdAt: -1 });
+
+    console.log(`[${role.toUpperCase()}] Found ${customers.length} customers`);
+
+    res.json({
+      success: true,
+      data: customers,
+      meta: {
+        total: customers.length,
+        role: role
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching customers:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Gagal mengambil data customer',
+      error: error.message
+    });
+  }
+});
+
+// GET SINGLE CUSTOMER BY ID
 router.get('/:id', async (req, res) => {
   try {
+    const { role, id: userId } = req.user;
     const customer = await Customer.findById(req.params.id);
 
     if (!customer) {
       return res.status(404).json({
         success: false,
-        error: 'Customer not found'
+        message: 'Customer tidak ditemukan'
+      });
+    }
+
+    if (role !== 'admin' && customer.createdBy?.toString() !== userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Anda tidak memiliki akses ke customer ini'
       });
     }
 
@@ -84,76 +125,115 @@ router.get('/:id', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Get customer error:', error);
+    console.error('Error fetching customer:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to fetch customer'
+      message: 'Gagal mengambil data customer',
+      error: error.message
     });
   }
 });
 
-/**
- * POST /api/customers
- * Create new customer
- */
+// CREATE NEW CUSTOMER
 router.post('/',
   [
-    body('name').trim().notEmpty().withMessage('Name is required'),
-    body('phone').trim().notEmpty().withMessage('Phone is required'),
-    body('email').optional().isEmail().withMessage('Invalid email format'),
-    body('status').optional().isIn(['active', 'inactive', 'blocked'])
+    body('name').notEmpty().withMessage('Nama customer wajib diisi'),
+    body('phone').notEmpty().withMessage('Nomor telepon wajib diisi')
+      .matches(/^(\+62|62|0)[0-9]{9,12}$/)
+      .withMessage('Format nomor telepon tidak valid')
   ],
   async (req, res) => {
     try {
-      // Validate request
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
         return res.status(400).json({
           success: false,
-          error: 'Validation failed',
-          details: errors.array()
+          message: 'Validasi gagal',
+          errors: errors.array()
         });
       }
 
-      // Check if phone already exists
-      const existingCustomer = await Customer.findOne({ phone: req.body.phone });
+      const { id: userId } = req.user;
+      
+      const { 
+        name, 
+        phone, 
+        email, 
+        address, 
+        tags, 
+        status, 
+        division,
+        company,
+        city,
+        notes
+      } = req.body;
+
+      // Normalize phone number
+      let normalizedPhone = phone.replace(/\D/g, '');
+      if (normalizedPhone.startsWith('0')) {
+        normalizedPhone = '62' + normalizedPhone.substring(1);
+      } else if (!normalizedPhone.startsWith('62')) {
+        normalizedPhone = '62' + normalizedPhone;
+      }
+
+      // Check duplicate phone
+      const existingCustomer = await Customer.findOne({ 
+        phone: normalizedPhone,
+        createdBy: userId
+      });
+
       if (existingCustomer) {
         return res.status(400).json({
           success: false,
-          error: 'Phone number already exists'
+          message: 'Nomor telepon sudah terdaftar'
         });
       }
 
-      // Create customer
-      const customer = new Customer(req.body);
+      const customer = new Customer({
+        name,
+        phone: normalizedPhone,
+        email,
+        address,
+        tags: tags || [],
+        status: status || 'active',
+        division,
+        company,
+        city,
+        notes,
+        createdBy: userId
+      });
+
       await customer.save();
+
+      console.log(`✅ Customer created by user ${userId} with ${tags?.length || 0} tags`);
+
+      // 🔔 NOTIFY: Customer added
+      await notifyCustomerAdded(userId, customer);
 
       res.status(201).json({
         success: true,
-        message: 'Customer created successfully',
+        message: 'Customer berhasil ditambahkan',
         data: customer
       });
 
     } catch (error) {
-      console.error('Create customer error:', error);
+      console.error('Error creating customer:', error);
       res.status(500).json({
         success: false,
-        error: error.message || 'Failed to create customer'
+        message: 'Gagal menambahkan customer',
+        error: error.message
       });
     }
   }
 );
 
-/**
- * PUT /api/customers/:id
- * Update customer
- */
+// UPDATE CUSTOMER
 router.put('/:id',
   [
-    body('name').optional().trim().notEmpty(),
-    body('phone').optional().trim().notEmpty(),
-    body('email').optional().isEmail(),
-    body('status').optional().isIn(['active', 'inactive', 'blocked'])
+    body('name').notEmpty().withMessage('Nama customer wajib diisi'),
+    body('phone').notEmpty().withMessage('Nomor telepon wajib diisi')
+      .matches(/^(\+62|62|0)[0-9]{9,12}$/)
+      .withMessage('Format nomor telepon tidak valid')
   ],
   async (req, res) => {
     try {
@@ -161,95 +241,233 @@ router.put('/:id',
       if (!errors.isEmpty()) {
         return res.status(400).json({
           success: false,
-          error: 'Validation failed',
-          details: errors.array()
+          message: 'Validasi gagal',
+          errors: errors.array()
         });
       }
 
-      const customer = await Customer.findByIdAndUpdate(
-        req.params.id,
-        { ...req.body, updatedBy: req.body.updatedBy || 'system' },
-        { new: true, runValidators: true }
-      );
+      const { role, id: userId } = req.user;
+      const customer = await Customer.findById(req.params.id);
 
       if (!customer) {
         return res.status(404).json({
           success: false,
-          error: 'Customer not found'
+          message: 'Customer tidak ditemukan'
         });
       }
 
+      if (role !== 'admin' && 
+          customer.createdBy?.toString() !== userId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Anda tidak memiliki akses untuk mengubah customer ini'
+        });
+      }
+
+      const { 
+        name, 
+        phone, 
+        email, 
+        address, 
+        tags, 
+        status, 
+        division,
+        company,
+        city,
+        notes
+      } = req.body;
+
+      // Normalize phone number
+      let normalizedPhone = phone.replace(/\D/g, '');
+      if (normalizedPhone.startsWith('0')) {
+        normalizedPhone = '62' + normalizedPhone.substring(1);
+      } else if (!normalizedPhone.startsWith('62')) {
+        normalizedPhone = '62' + normalizedPhone;
+      }
+
+      // Check duplicate phone (exclude current customer)
+      if (normalizedPhone !== customer.phone) {
+        const existingCustomer = await Customer.findOne({
+          phone: normalizedPhone,
+          createdBy: userId,
+          _id: { $ne: req.params.id }
+        });
+
+        if (existingCustomer) {
+          return res.status(400).json({
+            success: false,
+            message: 'Nomor telepon sudah terdaftar'
+          });
+        }
+      }
+
+      customer.name = name;
+      customer.phone = normalizedPhone;
+      customer.email = email;
+      customer.address = address;
+      customer.tags = tags || [];
+      customer.status = status || 'active';
+      customer.division = division;
+      if (company !== undefined) customer.company = company;
+      if (city !== undefined) customer.city = city;
+      if (notes !== undefined) customer.notes = notes;
+
+      await customer.save();
+
+      console.log(`✅ Customer ${req.params.id} updated by user ${userId} with ${tags?.length || 0} tags`);
+
+      // 🔔 NOTIFY: Customer updated
+      await notifyCustomerUpdated(userId, customer);
+
       res.json({
         success: true,
-        message: 'Customer updated successfully',
+        message: 'Customer berhasil diupdate',
         data: customer
       });
 
     } catch (error) {
-      console.error('Update customer error:', error);
+      console.error('Error updating customer:', error);
       res.status(500).json({
         success: false,
-        error: error.message || 'Failed to update customer'
+        message: 'Gagal mengupdate customer',
+        error: error.message
       });
     }
   }
 );
 
-/**
- * DELETE /api/customers/:id
- * Delete customer
- */
+// DELETE CUSTOMER
 router.delete('/:id', async (req, res) => {
   try {
-    const customer = await Customer.findByIdAndDelete(req.params.id);
+    const { role, id: userId } = req.user;
+    const customer = await Customer.findById(req.params.id);
 
     if (!customer) {
       return res.status(404).json({
         success: false,
-        error: 'Customer not found'
+        message: 'Customer tidak ditemukan'
       });
     }
 
+    if (role !== 'admin' && 
+        customer.createdBy?.toString() !== userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Anda tidak memiliki akses untuk menghapus customer ini'
+      });
+    }
+
+    const customerName = customer.name;
+
+    await customer.deleteOne();
+
+    console.log(`✅ Customer ${req.params.id} deleted by user ${userId}`);
+
+    // 🔔 NOTIFY: Customer deleted
+    await notifyCustomerDeleted(userId, customerName);
+
     res.json({
       success: true,
-      message: 'Customer deleted successfully'
+      message: 'Customer berhasil dihapus'
     });
 
   } catch (error) {
-    console.error('Delete customer error:', error);
+    console.error('Error deleting customer:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to delete customer'
+      message: 'Gagal menghapus customer',
+      error: error.message
     });
   }
 });
 
-/**
- * GET /api/customers/stats/summary
- * Get customer statistics
- */
-router.get('/stats/summary', async (req, res) => {
+// BULK IMPORT CUSTOMERS
+router.post('/import', async (req, res) => {
   try {
-    const total = await Customer.countDocuments();
-    const active = await Customer.countDocuments({ status: 'active' });
-    const inactive = await Customer.countDocuments({ status: 'inactive' });
-    const blocked = await Customer.countDocuments({ status: 'blocked' });
+    const { id: userId } = req.user;
+    const { customers } = req.body;
+
+    if (!Array.isArray(customers) || customers.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Data customers harus berupa array dan tidak boleh kosong'
+      });
+    }
+
+    const results = {
+      success: [],
+      failed: []
+    };
+
+    for (const customerData of customers) {
+      try {
+        // Normalize phone
+        let phone = customerData.phone.replace(/\D/g, '');
+        if (phone.startsWith('0')) {
+          phone = '62' + phone.substring(1);
+        } else if (!phone.startsWith('62')) {
+          phone = '62' + phone;
+        }
+
+        // Check duplicate
+        const existing = await Customer.findOne({ 
+          phone,
+          createdBy: userId 
+        });
+
+        if (existing) {
+          results.failed.push({
+            data: customerData,
+            reason: 'Nomor telepon sudah terdaftar'
+          });
+          continue;
+        }
+
+        // Create customer
+        const customer = new Customer({
+          name: customerData.name,
+          phone,
+          email: customerData.email,
+          address: customerData.address,
+          tags: customerData.tags || [],
+          status: customerData.status || 'active',
+          division: customerData.division,
+          company: customerData.company,
+          city: customerData.city,
+          notes: customerData.notes,
+          createdBy: userId
+        });
+
+        await customer.save();
+        results.success.push(customer);
+
+      } catch (error) {
+        results.failed.push({
+          data: customerData,
+          reason: error.message
+        });
+      }
+    }
+
+    console.log(
+      `✅ Bulk import: ${results.success.length} success, ${results.failed.length} failed`
+    );
+
+    // 🔔 NOTIFY: Customer imported
+    await notifyCustomerImported(userId, results);
 
     res.json({
       success: true,
-      data: {
-        total,
-        active,
-        inactive,
-        blocked
-      }
+      message: `Berhasil import ${results.success.length} customer`,
+      data: results
     });
 
   } catch (error) {
-    console.error('Get stats error:', error);
+    console.error('Error importing customers:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to fetch statistics'
+      message: 'Gagal import customers',
+      error: error.message
     });
   }
 });

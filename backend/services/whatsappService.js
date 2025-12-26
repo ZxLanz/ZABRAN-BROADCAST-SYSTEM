@@ -1,11 +1,15 @@
-import { getWhatsAppClient } from "../config/whatsapp.js";
-import Message from "../models/Message.js";
+// backend/services/whatsappService.js
+const { getWhatsAppClient, getStatus } = require("../config/whatsapp");
+const Message = require("../models/Message"); // Asumsi model ini sudah CJS
 
-export const kirimPesanWA = async (nomor, pesan, broadcastId = null) => {
+const kirimPesanWA = async (nomor, pesan, broadcastId = null) => {
   try {
     const sock = getWhatsAppClient();
+    if (!sock || getStatus() !== 'connected') {
+        throw new Error('WhatsApp client is not connected.');
+    }
 
-    // Format nomor
+    // Format nomor (pastikan tanpa +, misal 62812...)
     const waNumber = nomor.replace(/\D/g, "") + "@s.whatsapp.net";
 
     // Kirim pesan
@@ -22,6 +26,7 @@ export const kirimPesanWA = async (nomor, pesan, broadcastId = null) => {
     return { success: true };
 
   } catch (err) {
+    // Simpan log error ke DB
     await Message.create({
       to: nomor,
       broadcastId,
@@ -33,3 +38,5 @@ export const kirimPesanWA = async (nomor, pesan, broadcastId = null) => {
     return { success: false, error: err.message };
   }
 };
+
+module.exports = { kirimPesanWA };

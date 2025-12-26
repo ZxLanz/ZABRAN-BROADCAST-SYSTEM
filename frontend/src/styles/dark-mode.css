@@ -1,0 +1,163 @@
+/* ZABRAN Broadcast System - Dark Mode Styles */
+/* Load this file conditionally when dark mode is enabled */
+
+.dark {
+  color-scheme: dark;
+}
+
+.dark body {
+  @apply bg-gray-900 text-gray-100;
+}
+
+/* Cards */
+.dark .card {
+  @apply bg-gray-800 border-gray-700;
+}
+
+/* Inputs & Forms */
+.dark .input,
+.dark .textarea,
+.dark select {
+  @apply bg-gray-800 border-gray-700 text-gray-100 placeholder-gray-500;
+  @apply focus:border-primary-500;
+}
+
+/* Buttons */
+.dark .btn-secondary {
+  @apply bg-gray-800 text-gray-200 border-gray-700;
+  @apply hover:border-primary-500 hover:text-primary-500;
+}
+
+.dark .btn-ghost {
+  @apply bg-transparent text-gray-300 hover:bg-gray-800;
+}
+
+/* Tables */
+.dark .table thead {
+  @apply bg-gray-900;
+}
+
+.dark .table th {
+  @apply text-primary-400;
+}
+
+.dark .table td {
+  @apply border-gray-700 text-gray-300;
+}
+
+.dark .table tbody tr:hover {
+  @apply bg-gray-800/50;
+}
+
+/* Sidebar */
+.dark .sidebar {
+  @apply bg-gray-900 border-gray-800;
+}
+
+.dark .sidebar-link {
+  @apply text-gray-400 hover:bg-white/5 hover:text-white;
+}
+
+.dark .sidebar-link.active {
+  @apply bg-primary-500/10 text-primary-400 border-primary-400;
+}
+
+/* Header */
+.dark .header {
+  @apply bg-gray-900 border-gray-800;
+}
+
+.dark .header-icon-btn {
+  @apply bg-white/5 border-white/10 text-gray-400;
+  @apply hover:bg-primary-500/20 hover:border-primary-500/50 hover:text-primary-400;
+}
+
+/* Typography */
+.dark h1,
+.dark h2,
+.dark h3,
+.dark .text-navy-800 {
+  @apply text-gray-100;
+}
+
+.dark .text-gray-600,
+.dark .text-gray-700 {
+  @apply text-gray-400;
+}
+
+.dark .text-gray-900 {
+  @apply text-gray-100;
+}
+
+/* Badges */
+.dark .badge-success {
+  @apply bg-green-900/30 text-green-400 border-green-800;
+}
+
+.dark .badge-warning {
+  @apply bg-yellow-900/30 text-yellow-400 border-yellow-800;
+}
+
+.dark .badge-error {
+  @apply bg-red-900/30 text-red-400 border-red-800;
+}
+
+.dark .badge-info {
+  @apply bg-blue-900/30 text-blue-400 border-blue-800;
+}
+
+/* Backgrounds */
+.dark .bg-gray-50,
+.dark .bg-gray-100,
+.dark .bg-white {
+  @apply bg-gray-800;
+}
+
+/* Borders */
+.dark .border-gray-200 {
+  @apply border-gray-700;
+}
+
+.dark .border-gray-300 {
+  @apply border-gray-600;
+}
+
+/* Status Backgrounds */
+.dark .bg-green-50 {
+  @apply bg-green-900/20;
+}
+
+.dark .bg-yellow-50 {
+  @apply bg-yellow-900/20;
+}
+
+.dark .bg-red-50 {
+  @apply bg-red-900/20;
+}
+
+.dark .bg-blue-50 {
+  @apply bg-blue-900/20;
+}
+
+/* Stat Card Background */
+.dark .stat-card::before {
+  @apply bg-gradient-to-br from-primary-500/10 to-transparent;
+}
+
+/* Scrollbar Dark Mode */
+.dark .scrollbar-thin {
+  scrollbar-color: #d4af6a #1f2937;
+}
+
+.dark .scrollbar-thin::-webkit-scrollbar-track {
+  @apply bg-gray-800;
+}
+
+.dark .scrollbar-thin::-webkit-scrollbar-thumb {
+  @apply bg-primary-500 hover:bg-primary-600;
+}
+
+/* Toast Notifications */
+.dark .Toaster__toast {
+  @apply bg-gray-800 text-gray-100 border-gray-700;
+}

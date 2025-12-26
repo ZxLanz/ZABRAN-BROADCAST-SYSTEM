@@ -1,0 +1,3 @@
+# Ignore all WhatsApp session data
+*
+!.gitignore

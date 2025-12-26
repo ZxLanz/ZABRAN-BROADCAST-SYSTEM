@@ -1,23 +1,27 @@
-// backend/models/Customer.js
+// backend/models/Customer.js - ✅ FIXED WITH createdBy
 const mongoose = require('mongoose');
 
 const customerSchema = new mongoose.Schema({
+  // Informasi Utama
   name: {
     type: String,
     required: true,
     trim: true
   },
-  phone: {
+  phone: { // Nomor telepon WhatsApp (format: 628xxxx)
     type: String,
     required: true,
-    unique: true,
+    unique: true, // Nomor telepon harus unik
     trim: true
   },
   email: {
     type: String,
     trim: true,
-    lowercase: true
+    lowercase: true,
+    unique: false
   },
+  
+  // Informasi Tambahan
   company: {
     type: String,
     trim: true
@@ -30,7 +34,9 @@ const customerSchema = new mongoose.Schema({
     type: String,
     trim: true
   },
-  tags: [{
+  
+  // Tagging dan Status
+  tags: [{ // Array of tags
     type: String,
     trim: true
   }],
@@ -40,67 +46,38 @@ const customerSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['active', 'inactive', 'blocked'],
+    enum: ['active', 'inactive', 'blocked'], // Status yang valid
     default: 'active'
   },
+  
+  // Custom Fields (untuk data pelanggan yang spesifik)
+  customFields: {
+    type: Map, // Menggunakan Map untuk menyimpan pasangan key-value dinamis
+    of: String
+  },
+
+  // Log Kontak
   lastContactDate: {
     type: Date
   },
-  customFields: {
-    type: Map,
-    of: String
-  },
+
+  // ✅ ADDED: User Ownership - Link customer to user who created it
   createdBy: {
-    type: String,
-    default: 'system'
-  },
-  updatedBy: {
-    type: String
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true // ✅ WAJIB - Every customer must have an owner
   }
+  
 }, {
-  timestamps: true
+  timestamps: true // Menambahkan createdAt dan updatedAt
 });
 
-// Indexes for better query performance
+// Indexing untuk meningkatkan performa query
 customerSchema.index({ phone: 1 });
 customerSchema.index({ name: 1 });
 customerSchema.index({ tags: 1 });
 customerSchema.index({ status: 1 });
-customerSchema.index({ createdAt: -1 });
-
-// Virtual for formatted phone number
-customerSchema.virtual('formattedPhone').get(function() {
-  // Remove non-numeric characters
-  const cleaned = this.phone.replace(/\D/g, '');
-  
-  // Add country code if not present (Indonesia +62)
-  if (!cleaned.startsWith('62')) {
-    return `62${cleaned.startsWith('0') ? cleaned.substring(1) : cleaned}`;
-  }
-  return cleaned;
-});
-
-// Method to check if customer is active
-customerSchema.methods.isActive = function() {
-  return this.status === 'active';
-};
-
-// Static method to find active customers
-customerSchema.statics.findActive = function() {
-  return this.find({ status: 'active' });
-};
-
-// Static method to search customers
-customerSchema.statics.search = function(query) {
-  return this.find({
-    $or: [
-      { name: new RegExp(query, 'i') },
-      { phone: new RegExp(query, 'i') },
-      { email: new RegExp(query, 'i') },
-      { company: new RegExp(query, 'i') }
-    ]
-  });
-};
+customerSchema.index({ createdBy: 1 }); // ✅ NEW INDEX - Fast filtering by user
 
 const Customer = mongoose.model('Customer', customerSchema);
 

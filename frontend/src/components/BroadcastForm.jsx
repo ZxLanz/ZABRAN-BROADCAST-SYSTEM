@@ -1,12 +1,17 @@
-// frontend/src/components/BroadcastForm.jsx - ✅ CLEANED VERSION (NO i18n)
+// frontend/src/components/BroadcastForm.jsx - ✅ RE-DESIGNED MULTI-STEP VERSION
 import { useState, useEffect } from 'react';
-import { X, Send, Upload, FileText, AlertCircle, Clock, Calendar } from 'lucide-react';
+import {
+  X, Send, Upload, FileText, AlertCircle,
+  Clock, Calendar, Check, ChevronRight, ChevronLeft,
+  Users, MessageSquare, Info
+} from 'lucide-react';
 import toast from 'react-hot-toast';
 import axios from '../utils/axios';
 
 export default function BroadcastForm({ onCreated }) {
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [currentStep, setCurrentStep] = useState(1);
   const [formData, setFormData] = useState({
     name: '',
     templateId: '',
@@ -22,19 +27,17 @@ export default function BroadcastForm({ onCreated }) {
     const fetchTemplates = async () => {
       try {
         const { data } = await axios.get('/templates');
-        
         if (data.success) {
           setTemplates(data.data || []);
-          if (data.data && data.data.length > 0) {
+          if (data.data && data.data.length > 0 && !formData.templateId) {
             setFormData(prev => ({ ...prev, templateId: data.data[0]._id }));
           }
         }
       } catch (error) {
         console.error('Failed to fetch templates:', error);
-        toast.error('Failed to load templates');
       }
     };
-    
+
     if (isOpen) {
       fetchTemplates();
     }
@@ -45,52 +48,48 @@ export default function BroadcastForm({ onCreated }) {
     if (!file) return;
 
     if (!file.name.endsWith('.csv')) {
-      toast.error('Please upload a valid CSV file');
+      toast.error('Gunakan file CSV yang valid');
       return;
     }
 
     setCsvFile(file);
-    
     const reader = new FileReader();
     reader.onload = async (event) => {
       try {
         const text = event.target.result;
         const lines = text.split('\n').filter(line => line.trim());
-        
+
         if (lines.length < 2) {
-          toast.error('CSV file is empty or has no data');
+          toast.error('File CSV kosong');
           return;
         }
 
         const firstLine = lines[0];
-        const delimiter = firstLine.includes('\t') ? '\t' : ',';
+        const delimiter = firstLine.includes('\t') ? '\t' : (firstLine.includes(';') ? ';' : ',');
 
         const headers = lines[0].split(delimiter).map(h => h.trim().toUpperCase());
-        const phoneIndex = headers.findIndex(h => h.includes('PHONE'));
-        const nameIndex = headers.findIndex(h => h.includes('NAME'));
-        
+        const phoneIndex = headers.findIndex(h => h.includes('PHONE') || h.includes('TELEPON') || h.includes('WA'));
+        const nameIndex = headers.findIndex(h => h.includes('NAME') || h.includes('NAMA'));
+
         if (phoneIndex === -1) {
-          toast.error('CSV must have a PHONE column');
+          toast.error('CSV harus memiliki kolom PHONE/TELEPON');
           return;
         }
 
         const recipients = [];
         for (let i = 1; i < lines.length; i++) {
           const values = lines[i].split(delimiter).map(v => v.trim());
-          
           const phone = values[phoneIndex];
           if (!phone) continue;
-          
-          const recipient = {
+
+          recipients.push({
             phone: phone.replace(/\D/g, ''),
             name: nameIndex !== -1 && values[nameIndex] ? values[nameIndex] : ''
-          };
-          
-          recipients.push(recipient);
+          });
         }
 
         if (recipients.length === 0) {
-          toast.error('No valid recipients found in CSV');
+          toast.error('Tidak ada penerima ditemukan');
           return;
         }
 
@@ -104,137 +103,58 @@ export default function BroadcastForm({ onCreated }) {
           recipients: JSON.stringify(recipients, null, 2)
         }));
 
-        toast.success(`Successfully loaded ${recipients.length} recipients from CSV`);
+        toast.success(`${recipients.length} penerima berhasil dimuat`);
       } catch (error) {
-        console.error('CSV parse error:', error);
-        toast.error('Failed to parse CSV file');
+        toast.error('Gagal membaca file CSV');
       }
     };
-    
     reader.readAsText(file);
   };
 
-  const getMinDateTime = () => {
-    const now = new Date();
-    now.setMinutes(now.getMinutes() + 5);
-    return now.toISOString().slice(0, 16);
+  const getRecipientsCount = () => {
+    try {
+      const list = JSON.parse(formData.recipients);
+      return Array.isArray(list) ? list.length : 0;
+    } catch {
+      return formData.recipients.split(',').filter(r => r.trim()).length;
+    }
   };
 
-  const getMaxDateTime = () => {
-    const maxDate = new Date();
-    maxDate.setDate(maxDate.getDate() + 30);
-    return maxDate.toISOString().slice(0, 16);
+  const nextStep = () => {
+    if (currentStep === 1 && !formData.name.trim()) {
+      toast.error('Nama campaign wajib diisi');
+      return;
+    }
+    if (currentStep === 2) {
+      if (!formData.templateId) {
+        toast.error('Pilih template terlebih dahulu');
+        return;
+      }
+      if (getRecipientsCount() === 0) {
+        toast.error('Tambahkan minimal satu penerima');
+        return;
+      }
+    }
+    setCurrentStep(prev => Math.min(prev + 1, 3));
   };
 
-  const getSchedulePreview = () => {
-    if (!formData.scheduleTime) return null;
-    
-    const scheduledDate = new Date(formData.scheduleTime);
-    const now = new Date();
-    const diff = scheduledDate - now;
-    
-    if (diff < 0) return 'Time is in the past';
-    
-    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-    const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-    
-    let timeStr = "";
-    if (days > 0) timeStr += `${days}d `;
-    if (hours > 0) timeStr += `${hours}h `;
-    if (minutes > 0) timeStr += `${minutes}m`;
-    
-    return `Starts in ${timeStr.trim()}`;
-  };
+  const prevStep = () => setCurrentStep(prev => Math.max(prev - 1, 1));
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    
-    console.log('='.repeat(70));
-    console.log('📊 FORM STATE CHECK:');
-    console.log('  name:', formData.name);
-    console.log('  templateId:', formData.templateId);
-    console.log('  recipients (raw):', formData.recipients);
-    console.log('  recipients length:', formData.recipients?.length);
-    console.log('  sendNow:', sendNow);
-    console.log('  scheduleTime:', formData.scheduleTime);
-    console.log('='.repeat(70));
-    
-    // ✅ VALIDATION
-    if (!formData.name.trim()) {
-      console.error('❌ Validation failed: name is empty');
-      toast.error('Campaign name is required');
-      return;
-    }
-
-    if (!formData.templateId) {
-      console.error('❌ Validation failed: templateId is empty');
-      toast.error('Please select a template');
-      return;
-    }
-
-    if (!formData.recipients.trim()) {
-      console.error('❌ Validation failed: recipients is empty');
-      toast.error('Please add at least one recipient');
-      return;
-    }
-
+  const handleSubmit = async () => {
     if (!sendNow && !formData.scheduleTime) {
-      console.error('❌ Validation failed: schedule time missing');
-      toast.error('Please select a schedule time');
-      return;
-    }
-
-    if (!sendNow && new Date(formData.scheduleTime) <= new Date()) {
-      console.error('❌ Validation failed: schedule time in past');
-      toast.error('Schedule time must be in the future');
+      toast.error('Pilih waktu penjadwalan');
       return;
     }
 
     try {
       setLoading(true);
-
-      // ✅ PARSE RECIPIENTS
       let recipientsList;
       try {
         recipientsList = JSON.parse(formData.recipients);
-        console.log('✅ Recipients parsed as JSON:', recipientsList);
-      } catch (parseError) {
-        console.warn('⚠️ JSON parse failed, trying CSV format...');
-        recipientsList = formData.recipients
-          .split(',')
-          .map(r => r.trim())
-          .filter(r => r)
-          .map(phone => ({ phone: phone.replace(/\D/g, '') }));
-        console.log('✅ Recipients parsed as CSV:', recipientsList);
+      } catch {
+        recipientsList = formData.recipients.split(',').map(r => ({ phone: r.trim().replace(/\D/g, '') })).filter(r => r.phone);
       }
 
-      // ✅ VALIDATE RECIPIENTS ARRAY
-      if (!Array.isArray(recipientsList)) {
-        console.error('❌ Recipients is not an array:', typeof recipientsList);
-        toast.error('Recipients must be an array');
-        return;
-      }
-
-      if (recipientsList.length === 0) {
-        console.error('❌ Recipients array is empty');
-        toast.error('Please add at least one recipient');
-        return;
-      }
-
-      console.log('✅ Recipients count:', recipientsList.length);
-
-      // ✅ VALIDATE PHONE NUMBERS
-      const invalidRecipients = recipientsList.filter(r => !r.phone || r.phone.length < 9);
-      if (invalidRecipients.length > 0) {
-        console.error('❌ Invalid recipients found:', invalidRecipients);
-        toast.error(`${invalidRecipients.length} recipients have invalid phone numbers`);
-        return;
-      }
-
-      console.log('✅ All phone numbers are valid');
-
-      // ✅ BUILD PAYLOAD
       const payload = {
         name: formData.name.trim(),
         templateId: formData.templateId,
@@ -242,285 +162,316 @@ export default function BroadcastForm({ onCreated }) {
         sendAt: sendNow ? null : formData.scheduleTime
       };
 
-      console.log('='.repeat(70));
-      console.log('📤 PAYLOAD TO SEND:');
-      console.log(JSON.stringify(payload, null, 2));
-      console.log('='.repeat(70));
-
-      // ✅ SEND REQUEST
       const { data } = await axios.post('/broadcasts', payload);
-
-      console.log('✅ SUCCESS RESPONSE:');
-      console.log(JSON.stringify(data, null, 2));
-
-      if (!data.success) {
-        throw new Error(data.message || 'Failed to create broadcast');
+      if (data.success) {
+        toast.success('Broadcast berhasil dibuat!');
+        setIsOpen(false);
+        resetForm();
+        if (onCreated) onCreated();
       }
-
-      toast.success(
-        sendNow 
-          ? 'Broadcast started successfully!' 
-          : `Broadcast scheduled for ${new Date(formData.scheduleTime).toLocaleString()}`
-      );
-      
-      // Reset form
-      setIsOpen(false);
-      setFormData({ name: '', templateId: '', recipients: '', scheduleTime: null });
-      setSendNow(true);
-      setCsvFile(null);
-      setCsvPreview(null);
-      
-      if (onCreated) {
-        onCreated();
-      }
-      
     } catch (error) {
-      console.error('='.repeat(70));
-      console.error('❌ ERROR DETAILS:');
-      console.error('  Status:', error.response?.status);
-      console.error('  Message:', error.response?.data?.message);
-      console.error('  Validation Errors:', error.response?.data?.errors);
-      console.error('  Full Response:', JSON.stringify(error.response?.data, null, 2));
-      console.error('  Full Error:', error);
-      console.error('='.repeat(70));
-      
-      const errorMsg = error.response?.data?.message 
-        || error.response?.data?.errors?.[0]?.msg
-        || error.message
-        || 'Failed to create broadcast';
-      
-      toast.error(`❌ ${errorMsg}`);
+      toast.error(error.response?.data?.message || 'Gagal membuat broadcast');
     } finally {
       setLoading(false);
     }
   };
 
+  const resetForm = () => {
+    setFormData({ name: '', templateId: '', recipients: '', scheduleTime: null });
+    setCurrentStep(1);
+    setSendNow(true);
+    setCsvFile(null);
+    setCsvPreview(null);
+  };
+
   const selectedTemplate = templates.find(t => t._id === formData.templateId);
+
+  const steps = [
+    { id: 1, title: 'Informasi Dasar', icon: Info },
+    { id: 2, title: 'Konten & Penerima', icon: MessageSquare },
+    { id: 3, title: 'Jadwal & Review', icon: Clock },
+  ];
 
   return (
     <>
       <button
         onClick={() => setIsOpen(true)}
-        className="bg-primary-500 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 hover:bg-primary-600 transition-colors shadow-lg"
+        className="bg-primary-500 text-white px-6 py-3 rounded-2xl font-bold flex items-center gap-2 hover:bg-primary-600 transition-all shadow-lg hover:shadow-primary-500/25 active:scale-95"
       >
         <Send className="w-5 h-5" />
         New Broadcast
       </button>
 
       {isOpen && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-            {/* Header */}
-            <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+        <div className="fixed inset-0 bg-navy-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-300">
+          <div className="bg-white rounded-[2rem] max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col shadow-2xl animate-in zoom-in-95 duration-300">
+
+            {/* Modal Header */}
+            <div className="px-8 py-6 border-b border-gray-100 flex items-center justify-between">
               <div>
-                <h2 className="text-2xl font-black text-navy-800">Create New Broadcast</h2>
-                <p className="text-sm text-gray-600">Fill in the campaign details</p>
+                <h2 className="text-2xl font-black text-navy-900 leading-tight">Create New Broadcast</h2>
+                <p className="text-gray-500 text-sm font-medium">Step {currentStep} of 3: {steps[currentStep - 1].title}</p>
               </div>
-              <button onClick={() => setIsOpen(false)} className="p-2 hover:bg-gray-100 rounded-lg">
-                <X className="w-6 h-6 text-gray-600" />
+              <button
+                onClick={() => setIsOpen(false)}
+                className="w-10 h-10 flex items-center justify-center rounded-xl bg-gray-50 hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="p-6 space-y-6">
-              {/* Campaign Name */}
-              <div>
-                <label className="block text-sm font-bold text-navy-800 mb-2">
-                  Campaign Name <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={formData.name}
-                  onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                  placeholder="e.g., Ramadan Sale 2025"
-                  className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:border-primary-500 focus:outline-none"
-                />
-              </div>
-
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Template */}
-                <div>
-                  <label className="block text-sm font-bold text-navy-800 mb-2">
-                    Template <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    value={formData.templateId}
-                    onChange={(e) => setFormData(prev => ({ ...prev, templateId: e.target.value }))}
-                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:border-primary-500 focus:outline-none"
-                  >
-                    <option value="">Select a template</option>
-                    {templates.map(template => (
-                      <option key={template._id} value={template._id}>{template.name}</option>
-                    ))}
-                  </select>
-
-                  {templates.length === 0 && (
-                    <p className="text-xs text-gray-500 mt-2">Loading templates...</p>
-                  )}
-
-                  <div className="mt-4 p-4 bg-gray-50 rounded-xl border border-gray-200">
-                    <p className="text-xs font-bold text-gray-600 mb-2">Preview</p>
-                    <div className="text-sm text-gray-700 whitespace-pre-line">
-                      {selectedTemplate ? selectedTemplate.message : 'Select a template to preview'}
+            {/* Step Indicator */}
+            <div className="px-8 py-4 bg-gray-50/50 flex items-center justify-center gap-4">
+              {steps.map((s, idx) => {
+                const Icon = s.icon;
+                const active = currentStep >= s.id;
+                const current = currentStep === s.id;
+                return (
+                  <div key={s.id} className="flex items-center">
+                    <div className={`
+                      flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300
+                      ${current ? 'bg-primary-500 text-white shadow-lg shadow-primary-500/30 font-bold scale-105' :
+                        active ? 'bg-primary-100 text-primary-700 font-semibold' : 'bg-white text-gray-400 border border-gray-100'}
+                    `}>
+                      <Icon className="w-4 h-4" />
+                      <span className="text-xs whitespace-nowrap hidden md:block">{s.title}</span>
                     </div>
+                    {idx < steps.length - 1 && (
+                      <div className={`w-8 h-[2px] mx-2 ${currentStep > s.id ? 'bg-primary-500' : 'bg-gray-200'}`} />
+                    )}
                   </div>
-                </div>
+                );
+              })}
+            </div>
 
-                {/* Recipients */}
-                <div>
-                  <label className="block text-sm font-bold text-navy-800 mb-2">
-                    Recipients <span className="text-red-500">*</span>
-                  </label>
-                  
-                  <div className="mb-3">
-                    <label className="flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-600 rounded-lg cursor-pointer hover:bg-blue-100 border-2 border-blue-200">
-                      <Upload className="w-4 h-4" />
-                      <span className="text-sm font-semibold">Upload CSV File</span>
-                      <input type="file" accept=".csv" onChange={handleCsvUpload} className="hidden" />
-                    </label>
-                  </div>
+            {/* Scrollable Content */}
+            <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
 
-                  <textarea
-                    value={formData.recipients}
-                    onChange={(e) => setFormData(prev => ({ ...prev, recipients: e.target.value }))}
-                    placeholder='Enter recipients in JSON format:
-[
-  {"phone": "628123456789", "name": "John"},
-  {"phone": "628987654321", "name": "Jane"}
-]'
-                    rows={8}
-                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:border-primary-500 focus:outline-none font-mono text-sm"
-                  />
-
-                  {csvPreview && (
-                    <div className="mt-3 p-3 bg-green-50 rounded-lg border border-green-200">
-                      <p className="text-sm font-bold text-green-800">
-                        ✓ Loaded {csvPreview.total} recipients from CSV
-                      </p>
-                      <div className="mt-2 p-2 bg-white rounded border border-green-200">
-                        <p className="text-xs font-bold text-gray-600 mb-1">Preview (first 5):</p>
-                        {csvPreview.sample.map((r, i) => (
-                          <p key={i} className="text-xs text-gray-700">
-                            {i + 1}. {r.name || 'No name'} ({r.phone})
-                          </p>
-                        ))}
-                        {csvPreview.total > 5 && (
-                          <p className="text-xs text-gray-500 mt-1">... and {csvPreview.total - 5} more</p>
-                        )}
+              {/* Step 1: Basic Info */}
+              {currentStep === 1 && (
+                <div className="space-y-6 animate-in slide-in-from-right-4 duration-300">
+                  <div className="max-w-xl mx-auto space-y-6">
+                    <div className="p-6 bg-primary-50 rounded-3xl border border-primary-100">
+                      <div className="flex gap-4">
+                        <div className="w-12 h-12 rounded-2xl bg-white flex items-center justify-center shadow-sm">
+                          <Info className="w-6 h-6 text-primary-500" />
+                        </div>
+                        <div>
+                          <h4 className="font-bold text-navy-900">Nama Campaign</h4>
+                          <p className="text-sm text-gray-500 mb-4">Mulai dengan memberikan nama yang deskriptif untuk campaign Anda.</p>
+                          <input
+                            type="text"
+                            value={formData.name}
+                            onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
+                            placeholder="e.g., Promo Gajian Akhir Bulan"
+                            className="w-full px-5 py-4 bg-white border-2 border-primary-100 rounded-2xl focus:border-primary-500 focus:outline-none focus:ring-4 focus:ring-primary-500/10 transition-all font-semibold"
+                          />
+                        </div>
                       </div>
                     </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Variable Helper */}
-              <div className="p-4 bg-yellow-50 rounded-xl border border-yellow-200">
-                <div className="flex items-start gap-2">
-                  <AlertCircle className="w-5 h-5 text-yellow-600 mt-0.5" />
-                  <div>
-                    <p className="text-sm font-bold text-yellow-800 mb-1">💡 Use Variables in Templates</p>
-                    <p className="text-xs text-yellow-700">
-                      <code className="bg-yellow-100 px-2 py-0.5 rounded">{'{name}'}</code> will be replaced with the recipient's name
-                    </p>
                   </div>
                 </div>
-              </div>
+              )}
 
-              {/* Schedule Options */}
-              <div className="border-t pt-6">
-                <label className="block text-sm font-bold text-navy-800 mb-4">
-                  <Clock className="w-4 h-4 inline mr-2" />
-                  Send Options
-                </label>
-
-                <div className="flex items-center gap-3 mb-4">
-                  <input
-                    type="checkbox"
-                    id="sendNow"
-                    checked={sendNow}
-                    onChange={(e) => {
-                      setSendNow(e.target.checked);
-                      if (e.target.checked) {
-                        setFormData(prev => ({ ...prev, scheduleTime: null }));
-                      }
-                    }}
-                    className="w-5 h-5 rounded border-2 border-gray-300"
-                  />
-                  <label htmlFor="sendNow" className="text-sm font-semibold text-gray-700 cursor-pointer">
-                    Send immediately
-                  </label>
-                </div>
-
-                {!sendNow && (
-                  <div className="pl-8 space-y-3">
+              {/* Step 2: Content & Recipients */}
+              {currentStep === 2 && (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 animate-in slide-in-from-right-4 duration-300">
+                  {/* Left: Template Selection */}
+                  <div className="space-y-6">
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        <Calendar className="w-4 h-4 inline mr-2" />
-                        Schedule Date & Time <span className="text-red-500">*</span>
+                      <label className="block text-[15px] font-bold text-navy-900 mb-3">Pilih Template</label>
+                      <select
+                        value={formData.templateId}
+                        onChange={(e) => setFormData(prev => ({ ...prev, templateId: e.target.value }))}
+                        className="w-full px-5 py-4 bg-gray-50 border-2 border-gray-100 rounded-2xl focus:border-primary-500 focus:outline-none transition-all font-medium appearance-none"
+                        style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 1.25rem center', backgroundSize: '1.2rem' }}
+                      >
+                        <option value="">-- Pilih Template Pesan --</option>
+                        {templates.map(t => (
+                          <option key={t._id} value={t._id}>{t.name}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* WhatsApp Style Preview */}
+                    <div className="space-y-3">
+                      <label className="block text-[15px] font-bold text-navy-900 mb-1">Preview Pesan</label>
+                      <div className="bg-[#efeae2] rounded-3xl p-6 relative overflow-hidden shadow-inner min-h-[220px]">
+                        <div className="absolute inset-0 opacity-5 pointer-events-none" style={{ backgroundImage: 'radial-gradient(#000 1px, transparent 1px)', backgroundSize: '15px 15px' }} />
+                        <div className="relative bg-white rounded-2xl rounded-tl-none p-4 shadow-sm max-w-[90%] animate-in zoom-in-95 duration-200">
+                          <p className="text-[14px] text-gray-800 whitespace-pre-line leading-relaxed">
+                            {selectedTemplate ? selectedTemplate.message : 'Belum ada template yang dipilih...'}
+                          </p>
+                          <div className="flex justify-end mt-1">
+                            <span className="text-[10px] text-gray-400">12:00</span>
+                          </div>
+                          <div className="absolute top-0 -left-2 w-3 h-3 bg-white [clip-path:polygon(100%_0,100%_100%,0_0)]" />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Right: Recipients */}
+                  <div className="space-y-6">
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-[15px] font-bold text-navy-900">Daftar Penerima</label>
+                      <p className="text-xs font-bold text-primary-600 bg-primary-50 px-3 py-1 rounded-full">
+                        {getRecipientsCount()} Penerima
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-4">
+                      <label className="group flex flex-col items-center justify-center gap-2 p-8 border-2 border-dashed border-gray-200 rounded-3xl hover:border-primary-400 hover:bg-primary-50/30 transition-all cursor-pointer">
+                        <div className="w-12 h-12 rounded-2xl bg-gray-50 flex items-center justify-center group-hover:bg-primary-100 transition-colors">
+                          <Upload className="w-6 h-6 text-gray-400 group-hover:text-primary-500" />
+                        </div>
+                        <div className="text-center">
+                          <p className="text-sm font-bold text-navy-900">Upload CSV</p>
+                          <p className="text-xs text-gray-400">Pilih file atau drop disini</p>
+                        </div>
+                        <input type="file" accept=".csv" onChange={handleCsvUpload} className="hidden" />
                       </label>
-                      <input
-                        type="datetime-local"
-                        value={formData.scheduleTime || ''}
-                        onChange={(e) => setFormData(prev => ({ ...prev, scheduleTime: e.target.value }))}
-                        min={getMinDateTime()}
-                        max={getMaxDateTime()}
-                        className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:border-primary-500 focus:outline-none"
+
+                      <textarea
+                        value={formData.recipients}
+                        onChange={(e) => setFormData(prev => ({ ...prev, recipients: e.target.value }))}
+                        placeholder='Atau paste manual: 6281xxx, 6282xxx...'
+                        className="w-full px-5 py-4 bg-gray-50 border-2 border-gray-100 rounded-2xl focus:border-primary-500 focus:outline-none transition-all font-mono text-xs h-32 custom-scrollbar"
                       />
                     </div>
 
-                    {formData.scheduleTime && (
-                      <div className="p-4 bg-blue-50 rounded-xl border border-blue-200">
-                        <p className="text-sm font-bold text-blue-800 mb-1">Scheduled for:</p>
-                        <p className="text-sm text-blue-700">
-                          {new Date(formData.scheduleTime).toLocaleString('en-US', {
-                            weekday: 'short',
-                            month: 'short',
-                            day: 'numeric',
-                            year: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit'
-                          })}
-                        </p>
-                        <p className="text-xs text-blue-600 mt-1">{getSchedulePreview()}</p>
+                    {csvPreview && (
+                      <div className="p-4 bg-green-50 rounded-2xl border border-green-100 animate-in slide-in-from-top-2">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Check className="w-4 h-4 text-green-600" />
+                          <p className="text-xs font-bold text-green-700">{csvPreview.total} kontak berhasil dimuat</p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {csvPreview.sample.map((s, i) => (
+                            <span key={i} className="px-2 py-1 bg-white text-[10px] text-green-600 rounded-lg border border-green-200 font-medium">
+                              {s.name || 'User'} ({s.phone.slice(-4)})
+                            </span>
+                          ))}
+                        </div>
                       </div>
                     )}
+                  </div>
+                </div>
+              )}
 
-                    <div className="p-3 bg-gray-50 rounded-lg border border-gray-200">
-                      <p className="text-xs text-gray-600">
-                        ⏰ Schedule between 5 minutes from now and up to 30 days in advance
-                      </p>
+              {/* Step 3: Scheduling & Final Review */}
+              {currentStep === 3 && (
+                <div className="max-w-xl mx-auto space-y-8 animate-in slide-in-from-right-4 duration-300">
+                  <div className="space-y-4">
+                    <label className="block text-[15px] font-bold text-navy-900">Metode Pengiriman</label>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <button
+                        onClick={() => setSendNow(true)}
+                        className={`p-6 rounded-3xl border-2 text-left transition-all ${sendNow ? 'border-primary-500 bg-primary-50/50 shadow-md ring-4 ring-primary-500/10' : 'border-gray-100 bg-white hover:border-gray-200'}`}
+                      >
+                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center mb-4 ${sendNow ? 'bg-primary-500 text-white' : 'bg-gray-100 text-gray-400'}`}>
+                          <Send className="w-5 h-5" />
+                        </div>
+                        <p className="font-bold text-navy-900 mb-1">Kirim Sekarang</p>
+                        <p className="text-xs text-gray-500">Eksekusi campaign segera mungkin.</p>
+                      </button>
+
+                      <button
+                        onClick={() => setSendNow(false)}
+                        className={`p-6 rounded-3xl border-2 text-left transition-all ${!sendNow ? 'border-primary-500 bg-primary-50/50 shadow-md ring-4 ring-primary-500/10' : 'border-gray-100 bg-white hover:border-gray-200'}`}
+                      >
+                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center mb-4 ${!sendNow ? 'bg-primary-500 text-white' : 'bg-gray-100 text-gray-400'}`}>
+                          <Calendar className="w-5 h-5" />
+                        </div>
+                        <p className="font-bold text-navy-900 mb-1">Jadwalkan</p>
+                        <p className="text-xs text-gray-500">Pilih waktu terbaik untuk mengirim.</p>
+                      </button>
                     </div>
                   </div>
-                )}
-              </div>
 
-              {/* Action Buttons */}
-              <div className="flex gap-3 justify-end pt-4 border-t border-gray-200">
-                <button
-                  type="button"
-                  onClick={() => setIsOpen(false)}
-                  className="px-6 py-3 border-2 border-gray-300 text-gray-700 rounded-xl font-bold hover:bg-gray-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSubmit}
-                  disabled={loading}
-                  className="px-6 py-3 bg-primary-500 text-white rounded-xl font-bold flex items-center gap-2 hover:bg-primary-600 disabled:opacity-50"
-                >
-                  {loading ? (
-                    <>
-                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      {sendNow ? 'Sending...' : 'Scheduling...'}
-                    </>
-                  ) : (
-                    <>
-                      {sendNow ? <Send className="w-5 h-5" /> : <Clock className="w-5 h-5" />}
-                      {sendNow ? 'Send Now' : 'Schedule Broadcast'}
-                    </>
+                  {!sendNow && (
+                    <div className="p-6 bg-gray-50 rounded-3xl border border-gray-100 animate-in slide-in-from-top-2">
+                      <label className="block text-sm font-bold text-navy-900 mb-3">Pilih Waktu & Tanggal</label>
+                      <div className="relative">
+                        <input
+                          type="datetime-local"
+                          value={formData.scheduleTime || ''}
+                          onChange={(e) => setFormData(prev => ({ ...prev, scheduleTime: e.target.value }))}
+                          className="w-full px-5 py-4 bg-white border-2 border-gray-200 rounded-2xl focus:border-primary-500 focus:outline-none transition-all font-semibold"
+                        />
+                      </div>
+                    </div>
                   )}
-                </button>
-              </div>
+
+                  {/* Summary Card */}
+                  <div className="bg-navy-900 text-white p-8 rounded-[2.5rem] shadow-xl relative overflow-hidden group">
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-primary-500/20 rounded-full -mr-16 -mt-16 blur-3xl group-hover:bg-primary-500/30 transition-colors" />
+                    <h4 className="text-xl font-black mb-6 flex items-center gap-2">
+                      <FileText className="w-5 h-5 text-primary-400" />
+                      Campaign Summary
+                    </h4>
+                    <div className="space-y-4">
+                      <div className="flex justify-between items-center py-2 border-b border-navy-700">
+                        <span className="text-gray-400 text-sm font-medium">Name</span>
+                        <span className="font-bold truncate max-w-[200px]">{formData.name}</span>
+                      </div>
+                      <div className="flex justify-between items-center py-2 border-b border-navy-700">
+                        <span className="text-gray-400 text-sm font-medium">Template</span>
+                        <span className="font-bold text-primary-400">{selectedTemplate?.name || '-'}</span>
+                      </div>
+                      <div className="flex justify-between items-center py-2 border-b border-navy-700">
+                        <span className="text-gray-400 text-sm font-medium">Recipients</span>
+                        <span className="bg-navy-800 px-3 py-1 rounded-lg font-black">{getRecipientsCount()} Contacts</span>
+                      </div>
+                      <div className="flex justify-between items-center pt-2">
+                        <span className="text-gray-400 text-sm font-medium">Timing</span>
+                        <span className="font-bold text-green-400">
+                          {sendNow ? 'Immediate Delivery' : (formData.scheduleTime ? new Date(formData.scheduleTime).toLocaleString() : 'Not set')}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-8 py-6 border-t border-gray-100 flex items-center justify-between bg-white">
+              <button
+                type="button"
+                onClick={currentStep === 1 ? () => setIsOpen(false) : prevStep}
+                className="flex items-center gap-2 px-6 py-3 text-gray-500 font-bold hover:text-navy-900 transition-colors rounded-2xl hover:bg-gray-50"
+              >
+                {currentStep === 1 ? 'Cancel' : (
+                  <>
+                    <ChevronLeft className="w-5 h-5" />
+                    Back
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={currentStep === 3 ? handleSubmit : nextStep}
+                disabled={loading}
+                className={`
+                  flex items-center gap-2 px-8 py-3 rounded-2xl font-black transition-all shadow-lg active:scale-95
+                  ${currentStep === 3 ? 'bg-navy-900 text-white hover:bg-navy-800 shadow-navy-900/20' : 'bg-primary-500 text-white hover:bg-primary-600 shadow-primary-500/20'}
+                `}
+              >
+                {loading ? (
+                  <div className="flex items-center gap-2">
+                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    Processing...
+                  </div>
+                ) : (
+                  <>
+                    {currentStep === 3 ? (sendNow ? 'Launch Campaign' : 'Schedule Campaign') : 'Continue'}
+                    {currentStep < 3 && <ChevronRight className="w-5 h-5" />}
+                    {currentStep === 3 && <Send className="w-5 h-5 ml-1" />}
+                  </>
+                )}
+              </button>
             </div>
           </div>
         </div>

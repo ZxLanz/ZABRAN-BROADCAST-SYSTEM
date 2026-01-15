@@ -1,47 +1,38 @@
 import { useState, useEffect } from 'react';
-import { X, AlertCircle } from 'lucide-react';
+import { X, AlertCircle, User, Phone, Tag, CheckCircle2, Save, Info } from 'lucide-react';
 import axios from '../utils/axios';
 import toast from 'react-hot-toast';
 
-// ✅ FIXED: Props sesuai dengan Customers.jsx
 function CustomerForm({ isOpen, onClose, onSuccess, editData, API_BASE_URL }) {
   const [formData, setFormData] = useState({
     name: '',
     phone: '',
-    email: '',
     status: 'active',
-    division: '',
-    tags: [] // ✅ ADDED
+    tags: []
   });
 
-  const [tagInput, setTagInput] = useState(''); // ✅ ADDED
+  const [tagInput, setTagInput] = useState('');
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
 
-  // ✅ FIXED: Gunakan editData, bukan customer
   useEffect(() => {
     if (editData) {
       setFormData({
         name: editData.name || '',
         phone: editData.phone || '',
-        email: editData.email || '',
         status: editData.status || 'active',
-        division: editData.division || '',
-        tags: editData.tags || [] // ✅ ADDED
+        tags: editData.tags || []
       });
     } else {
-      // Reset form jika tidak ada editData
       setFormData({
         name: '',
         phone: '',
-        email: '',
         status: 'active',
-        division: '',
         tags: []
       });
       setTagInput('');
     }
-  }, [editData, isOpen]); // ✅ ADDED: isOpen dependency untuk reset saat modal dibuka
+  }, [editData, isOpen]);
 
   const validateForm = () => {
     const newErrors = {};
@@ -52,12 +43,8 @@ function CustomerForm({ isOpen, onClose, onSuccess, editData, API_BASE_URL }) {
 
     if (!formData.phone.trim()) {
       newErrors.phone = 'Phone number is required';
-    } else if (!/^(08|\+?628)\d{8,11}$/.test(formData.phone)) {
+    } else if (!/^(08|\+?628|\d{10,15})\d*$/.test(formData.phone)) {
       newErrors.phone = 'Invalid phone number format';
-    }
-
-    if (formData.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
-      newErrors.email = 'Invalid email format';
     }
 
     setErrors(newErrors);
@@ -65,19 +52,13 @@ function CustomerForm({ isOpen, onClose, onSuccess, editData, API_BASE_URL }) {
   };
 
   const formatPhoneNumber = (phone) => {
-    if (phone.startsWith('08')) {
-      return '628' + phone.substring(2);
+    let cleaned = phone.replace(/\D/g, '');
+    if (cleaned.startsWith('08')) {
+      return '628' + cleaned.substring(2);
     }
-    if (phone.startsWith('+62')) {
-      return phone.substring(1);
-    }
-    if (phone.startsWith('62')) {
-      return phone;
-    }
-    return phone;
+    return cleaned;
   };
 
-  // ✅ ADDED: Handle tag input
   const handleAddTag = () => {
     const tag = tagInput.trim();
     if (tag && !formData.tags.includes(tag)) {
@@ -89,7 +70,6 @@ function CustomerForm({ isOpen, onClose, onSuccess, editData, API_BASE_URL }) {
     }
   };
 
-  // ✅ ADDED: Handle tag removal
   const handleRemoveTag = (tagToRemove) => {
     setFormData(prev => ({
       ...prev,
@@ -97,7 +77,6 @@ function CustomerForm({ isOpen, onClose, onSuccess, editData, API_BASE_URL }) {
     }));
   };
 
-  // ✅ ADDED: Handle Enter key for tags
   const handleTagKeyPress = (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -108,12 +87,10 @@ function CustomerForm({ isOpen, onClose, onSuccess, editData, API_BASE_URL }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    if (!validateForm()) {
-      return;
-    }
+    if (!validateForm()) return;
 
     setLoading(true);
-    setErrors({}); // ✅ Clear previous errors
+    setErrors({});
 
     try {
       const dataToSubmit = {
@@ -121,48 +98,25 @@ function CustomerForm({ isOpen, onClose, onSuccess, editData, API_BASE_URL }) {
         phone: formatPhoneNumber(formData.phone)
       };
 
-      // 🔍 DEBUG: Log data yang akan dikirim
-      console.log('📤 Data yang dikirim ke backend:', dataToSubmit);
-      console.log('🏷️ Tags yang dikirim:', dataToSubmit.tags);
-      console.log('📊 Total tags:', dataToSubmit.tags?.length || 0);
-
-      // ✅ FIXED: Gunakan editData dan API_BASE_URL dari props
-      let response;
       if (editData) {
-        response = await axios.put(`${API_BASE_URL}/${editData._id}`, dataToSubmit);
-        console.log('✅ Response dari UPDATE:', response.data);
-        toast.success('Customer updated successfully!');
+        await axios.put(`${API_BASE_URL}/${editData._id}`, dataToSubmit);
+        toast.success('Customer updated!');
       } else {
-        response = await axios.post(API_BASE_URL, dataToSubmit);
-        console.log('✅ Response dari CREATE:', response.data);
-        toast.success('Customer created successfully!');
+        await axios.post(API_BASE_URL, dataToSubmit);
+        toast.success('Customer created!');
       }
-      
-      // 🔍 DEBUG: Cek apakah response punya tags
-      console.log('🏷️ Tags di response:', response.data?.data?.tags || response.data?.tags);
 
       onSuccess();
       onClose();
     } catch (error) {
       console.error('Error saving customer:', error);
-      
-      // ✅ ADDED: Duplicate detection
       const errorMsg = error.response?.data?.message || error.message || '';
-      
-      if (error.response?.status === 400 || error.response?.status === 409) {
-        if (errorMsg.includes('already exists') || 
-            errorMsg.includes('duplicate') || 
-            errorMsg.includes('phone')) {
-          setErrors({
-            submit: '⚠️ Customer dengan nomor telepon ini sudah terdaftar!'
-          });
-          return;
-        }
+
+      if (errorMsg.includes('already exists') || errorMsg.includes('duplicate')) {
+        setErrors({ submit: 'This phone number is already registered!' });
+      } else {
+        setErrors({ submit: errorMsg || 'Failed to save customer' });
       }
-      
-      setErrors({
-        submit: error.response?.data?.message || 'Failed to save customer'
-      });
     } finally {
       setLoading(false);
     }
@@ -170,192 +124,147 @@ function CustomerForm({ isOpen, onClose, onSuccess, editData, API_BASE_URL }) {
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setFormData(prev => ({
-      ...prev,
-      [name]: value
-    }));
-    if (errors[name]) {
-      setErrors(prev => ({ ...prev, [name]: '' }));
-    }
+    setFormData(prev => ({ ...prev, [name]: value }));
+    if (errors[name]) setErrors(prev => ({ ...prev, [name]: '' }));
   };
 
-  // ✅ FIXED: Cek isOpen untuk render modal
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-        <div className="sticky top-0 bg-white border-b px-6 py-4 flex justify-between items-center">
-          <h2 className="text-xl font-semibold text-gray-800">
-            {editData ? 'Edit Customer' : 'Add New Customer'}
-          </h2>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 transition-colors"
-          >
-            <X className="w-6 h-6" />
-          </button>
+    <div className="fixed inset-0 bg-navy-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-300">
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-300 border border-white/20">
+
+        {/* Header */}
+        <div className="bg-navy-900 px-8 py-6 relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-32 h-32 bg-primary-500/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
+          <div className="flex items-center justify-between relative z-10">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-white/10 backdrop-blur-md rounded-xl flex items-center justify-center border border-white/10 shadow-inner">
+                {editData ? <Save className="w-6 h-6 text-primary-400" /> : <User className="w-6 h-6 text-primary-400" />}
+              </div>
+              <div>
+                <h2 className="text-xl font-bold text-white">
+                  {editData ? 'Update Profile' : 'New Customer'}
+                </h2>
+                <p className="text-xs font-medium text-gray-400 tracking-wide">
+                  Fill in the details below
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={onClose}
+              disabled={loading}
+              className="w-9 h-9 bg-white/5 hover:bg-white/10 rounded-lg flex items-center justify-center transition-all disabled:opacity-50 text-gray-400 hover:text-white"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6">
-          {/* ✅ ADDED: Duplicate Alert */}
+        <form onSubmit={handleSubmit} className="p-8">
           {errors.submit && (
-            <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3">
+            <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl flex items-start gap-3 animate-in shake duration-300">
               <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
-              <p className="text-red-800 text-sm">{errors.submit}</p>
+              <p className="text-red-800 text-sm font-semibold">{errors.submit}</p>
             </div>
           )}
 
-          <div className="space-y-4">
+          <div className="space-y-5">
             {/* Name */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Name <span className="text-red-500">*</span>
+            <div className="space-y-1.5">
+              <label className="text-sm font-semibold text-gray-700 ml-1 flex items-center gap-2">
+                <User className="w-4 h-4 text-gray-400" /> Full Name
               </label>
               <input
                 type="text"
                 name="name"
                 value={formData.name}
                 onChange={handleChange}
-                className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent ${
-                  errors.name ? 'border-red-500' : 'border-gray-300'
-                }`}
-                placeholder="Enter customer name"
+                className={`w-full px-5 py-3 bg-gray-50 border rounded-xl font-medium text-navy-900 focus:outline-none focus:bg-white focus:ring-4 focus:ring-primary-500/10 transition-all ${errors.name ? 'border-red-500' : 'border-gray-200 focus:border-primary-500'
+                  }`}
+                placeholder="e.g. John Doe"
               />
-              {errors.name && (
-                <p className="mt-1 text-sm text-red-500">{errors.name}</p>
-              )}
+              {errors.name && <p className="text-xs font-semibold text-red-500 ml-2">{errors.name}</p>}
             </div>
 
             {/* Phone */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Phone Number <span className="text-red-500">*</span>
+            <div className="space-y-1.5">
+              <label className="text-sm font-semibold text-gray-700 ml-1 flex items-center gap-2">
+                <Phone className="w-4 h-4 text-gray-400" /> WhatsApp Number
               </label>
-              <input
-                type="text"
-                name="phone"
-                value={formData.phone}
-                onChange={handleChange}
-                className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent ${
-                  errors.phone ? 'border-red-500' : 'border-gray-300'
-                }`}
-                placeholder="08xxxxxxxxxx"
-              />
-              {errors.phone && (
-                <p className="mt-1 text-sm text-red-500">{errors.phone}</p>
-              )}
-            </div>
-
-            {/* Email */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Email
-              </label>
-              <input
-                type="email"
-                name="email"
-                value={formData.email}
-                onChange={handleChange}
-                className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent ${
-                  errors.email ? 'border-red-500' : 'border-gray-300'
-                }`}
-                placeholder="customer@example.com"
-              />
-              {errors.email && (
-                <p className="mt-1 text-sm text-red-500">{errors.email}</p>
-              )}
-            </div>
-
-            {/* Status */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Status <span className="text-red-500">*</span>
-              </label>
-              <select
-                name="status"
-                value={formData.status}
-                onChange={handleChange}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-              >
-                <option value="active">Active</option>
-                <option value="inactive">Inactive</option>
-                <option value="blocked">Blocked</option>
-              </select>
-            </div>
-
-            {/* ✅ ADDED: Tags Section */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Tags / Groups
-              </label>
-              
-              <div className="flex gap-2 mb-3">
+              <div className="relative">
+                <span className="absolute left-5 top-1/2 -translate-y-1/2 font-bold text-gray-400">+</span>
                 <input
                   type="text"
-                  value={tagInput}
-                  onChange={(e) => setTagInput(e.target.value)}
-                  onKeyPress={handleTagKeyPress}
-                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                  placeholder="Type tag and press Enter"
+                  name="phone"
+                  value={formData.phone}
+                  onChange={handleChange}
+                  className={`w-full pl-9 pr-5 py-3 bg-gray-50 border rounded-xl font-medium text-navy-900 focus:outline-none focus:bg-white focus:ring-4 focus:ring-primary-500/10 transition-all ${errors.phone ? 'border-red-500' : 'border-gray-200 focus:border-primary-500'
+                    }`}
+                  placeholder="628..."
                 />
-                <button
-                  type="button"
-                  onClick={handleAddTag}
-                  className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
-                >
-                  Add
-                </button>
               </div>
-
-              {/* Display Tags */}
-              {formData.tags.length > 0 && (
-                <div className="flex flex-wrap gap-2">
-                  {formData.tags.map((tag, index) => (
-                    <span
-                      key={index}
-                      className="inline-flex items-center gap-1 px-3 py-1 bg-primary-100 text-primary-800 rounded-full text-sm"
-                    >
-                      {tag}
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveTag(tag)}
-                        className="hover:text-primary-900"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              )}
-              
-              <p className="mt-2 text-xs text-gray-500">
-                Add tags to categorize customers (e.g., VIP, Premium, Regular)
-              </p>
+              {errors.phone && <p className="text-xs font-semibold text-red-500 ml-2">{errors.phone}</p>}
             </div>
 
-            {/* Division */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Division
-              </label>
-              <input
-                type="text"
-                name="division"
-                value={formData.division}
-                onChange={handleChange}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                placeholder="Enter division"
-              />
+            {/* Status & Tags Logic in Grid */}
+            <div className="grid grid-cols-2 gap-5">
+              <div className="space-y-1.5">
+                <label className="text-sm font-semibold text-gray-700 ml-1 flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-gray-400" /> Status
+                </label>
+                <select
+                  name="status"
+                  value={formData.status}
+                  onChange={handleChange}
+                  className="w-full px-5 py-3 bg-gray-50 border border-gray-200 rounded-xl font-medium text-navy-900 focus:outline-none focus:bg-white focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 transition-all appearance-none cursor-pointer"
+                >
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
+                  <option value="blocked">Blocked</option>
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-sm font-semibold text-gray-700 ml-1 flex items-center gap-2">
+                  <Tag className="w-4 h-4 text-gray-400" /> Add Tag
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={tagInput}
+                    onChange={(e) => setTagInput(e.target.value)}
+                    onKeyPress={handleTagKeyPress}
+                    className="flex-1 px-5 py-3 bg-gray-50 border border-gray-200 rounded-xl font-medium text-navy-900 focus:outline-none focus:bg-white focus:border-primary-500 focus:ring-4 focus:ring-primary-500/10 transition-all"
+                    placeholder="Tag name"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Tags Display */}
+            {formData.tags.length > 0 && (
+              <div className="flex flex-wrap gap-2 p-3 bg-gray-50 rounded-xl border border-gray-100">
+                {formData.tags.map((tag, index) => (
+                  <span key={index} className="flex items-center gap-1.5 px-3 py-1 bg-primary-100 text-primary-800 rounded-lg font-bold text-xs border border-primary-200">
+                    {tag}
+                    <button type="button" onClick={() => handleRemoveTag(tag)} className="hover:text-red-500 transition-colors"><X className="w-3.5 h-3.5" /></button>
+                  </span>
+                ))}
+              </div>
+            )}
+
+            <div className="flex items-center gap-3 p-3.5 bg-blue-50/50 rounded-xl border border-blue-100/50">
+              <Info className="w-4 h-4 text-blue-500 flex-shrink-0" />
+              <p className="text-[11px] font-medium text-blue-600 leading-snug">Personalize your broadcast campaigns with these details for better engagement.</p>
             </div>
           </div>
 
-          {/* Buttons */}
-          <div className="flex justify-end gap-3 mt-6 pt-4 border-t">
+          <div className="flex gap-3 mt-8">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+              className="flex-1 py-3.5 bg-gray-100 text-gray-600 rounded-xl font-bold hover:bg-gray-200 transition-all"
               disabled={loading}
             >
               Cancel
@@ -363,9 +272,16 @@ function CustomerForm({ isOpen, onClose, onSuccess, editData, API_BASE_URL }) {
             <button
               type="submit"
               disabled={loading}
-              className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex-[2] py-3.5 bg-navy-900 text-white rounded-xl font-bold text-base hover:bg-navy-800 transition-all shadow-lg shadow-navy-900/10 flex items-center justify-center gap-2"
             >
-              {loading ? 'Saving...' : editData ? 'Update' : 'Create'}
+              {loading ? (
+                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+              ) : (
+                <>
+                  <Save className="w-4 h-4" />
+                  {editData ? 'Update Profile' : 'Create Customer'}
+                </>
+              )}
             </button>
           </div>
         </form>

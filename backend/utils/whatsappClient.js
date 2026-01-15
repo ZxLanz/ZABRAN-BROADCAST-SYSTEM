@@ -1,9 +1,9 @@
 // File: backend/utils/whatsappClient.js - ✅ COMPLETE WITH READ RECEIPTS FIXED
 
 const makeWASocket = require('@whiskeysockets/baileys').default;
-const { 
-    useMultiFileAuthState, 
-    DisconnectReason, 
+const {
+    useMultiFileAuthState,
+    DisconnectReason,
     fetchLatestBaileysVersion,
     proto
 } = require('@whiskeysockets/baileys');
@@ -41,19 +41,19 @@ function getStatsPath(userId) {
 
 function loadStats(userId) {
     const statsFile = getStatsPath(userId);
-    
+
     if (fs.existsSync(statsFile)) {
         try {
             const data = fs.readFileSync(statsFile, 'utf8');
             const loadedStats = JSON.parse(data);
-            
+
             if (!loadedStats.responseTimes) {
                 loadedStats.responseTimes = [];
             }
             if (!loadedStats.deliveryStatus) {
                 loadedStats.deliveryStatus = { success: 0, failed: 0 };
             }
-            
+
             statsMap.set(userId, loadedStats);
             checkDailyReset(userId);
         } catch (e) {
@@ -85,14 +85,14 @@ function saveStats(userId) {
     try {
         const stats = statsMap.get(userId);
         if (!stats) return;
-        
+
         const statsFile = getStatsPath(userId);
         const dir = path.dirname(statsFile);
-        
+
         if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });
         }
-        
+
         fs.writeFileSync(statsFile, JSON.stringify(stats, null, 2));
     } catch (e) {
         console.error(`❌ [STATS] Error saving for user ${userId}:`, e.message);
@@ -102,7 +102,7 @@ function saveStats(userId) {
 function checkDailyReset(userId) {
     const stats = statsMap.get(userId);
     if (!stats) return;
-    
+
     const today = new Date().toDateString();
     if (stats.lastResetDate !== today) {
         console.log(`🔄 [RESET] Daily stats reset for user ${userId}`);
@@ -118,72 +118,72 @@ function checkDailyReset(userId) {
 function updateChatActivity(userId, jid, direction = 'received', messageTimestamp = null) {
     const stats = statsMap.get(userId);
     if (!stats) return;
-    
+
     const timestamp = new Date().toISOString();
     checkDailyReset(userId);
-    
+
     if (!stats.responseTimes) {
         stats.responseTimes = [];
     }
     if (!stats.deliveryStatus) {
         stats.deliveryStatus = { success: 0, failed: 0 };
     }
-    
+
     if (direction === 'sent') {
         stats.sentToday++;
         stats.sentTotal++;
     } else {
         stats.receivedToday++;
         stats.receivedTotal++;
-        
+
         if (stats.chats[jid] && stats.chats[jid].lastSentAt) {
             const lastSent = new Date(stats.chats[jid].lastSentAt).getTime();
             const now = Date.now();
             const responseTime = Math.floor((now - lastSent) / 1000);
-            
+
             if (responseTime < 3600 && responseTime > 0) {
                 stats.responseTimes.push(responseTime);
-                
+
                 if (stats.responseTimes.length > 100) {
                     stats.responseTimes.shift();
                 }
             }
         }
     }
-    
+
     if (!stats.chats[jid]) {
-        stats.chats[jid] = { 
-            lastActivity: timestamp, 
+        stats.chats[jid] = {
+            lastActivity: timestamp,
             messageCount: 0,
             lastReceivedAt: direction === 'received' ? timestamp : null,
             lastSentAt: direction === 'sent' ? timestamp : null
         };
     }
-    
+
     stats.chats[jid].lastActivity = timestamp;
     stats.chats[jid].messageCount++;
-    
+
     if (direction === 'received') {
         stats.chats[jid].lastReceivedAt = timestamp;
     } else {
         stats.chats[jid].lastSentAt = timestamp;
     }
-    
+
     saveStats(userId);
 }
 
 function updateDeliveryStatus(userId, success) {
     const stats = statsMap.get(userId);
     if (!stats) return;
-    
+
     checkDailyReset(userId);
-    
+
     if (success) {
         stats.deliveryStatus.success++;
     } else {
         stats.deliveryStatus.failed++;
     }
-    
+
     saveStats(userId);
 }
 
@@ -191,10 +191,10 @@ function calculateAverageResponseTime(responseTimes) {
     if (!responseTimes || responseTimes.length === 0) {
         return '0m';
     }
-    
+
     const total = responseTimes.reduce((sum, time) => sum + time, 0);
     const avgSeconds = Math.floor(total / responseTimes.length);
-    
+
     if (avgSeconds < 60) {
         return `${avgSeconds}s`;
     } else if (avgSeconds < 3600) {
@@ -210,7 +210,7 @@ function calculateAverageResponseTime(responseTimes) {
 function calculateSuccessRate(deliveryStatus) {
     const total = deliveryStatus.success + deliveryStatus.failed;
     if (total === 0) return '100%';
-    
+
     const rate = Math.floor((deliveryStatus.success / total) * 100);
     return `${rate}%`;
 }
@@ -250,43 +250,44 @@ async function getUserSettings(userId) {
 async function autoConnectAllUsers() {
     try {
         console.log('\n🔄 [AUTO-CONNECT] Checking for existing sessions...');
-        
+
+
         const User = require('../models/User');
-        
+
         if (!fs.existsSync(BASE_AUTH_PATH)) {
             console.log('ℹ️ [AUTO-CONNECT] No session folder found');
             return;
         }
-        
+
         const folders = fs.readdirSync(BASE_AUTH_PATH);
         const userFolders = folders.filter(f => f.startsWith('user-'));
-        
+
         if (userFolders.length === 0) {
             console.log('ℹ️ [AUTO-CONNECT] No user sessions found');
             return;
         }
-        
+
         console.log(`📂 [AUTO-CONNECT] Found ${userFolders.length} session(s)`);
-        
+
         for (const folder of userFolders) {
             const userId = folder.replace('user-', '');
-            
+
             try {
                 const authPath = path.join(BASE_AUTH_PATH, folder);
                 const credsPath = path.join(authPath, 'creds.json');
-                
+
                 if (fs.existsSync(credsPath)) {
                     console.log(`🔌 [AUTO-CONNECT] Restoring session for user: ${userId}`);
-                    
+
                     await restoreSession(userId);
-                    
+
                     console.log(`✅ [AUTO-CONNECT] User ${userId} session restored`);
                 } else {
                     console.log(`⚠️ [AUTO-CONNECT] No valid session for user ${userId}, skipping`);
                 }
             } catch (err) {
                 console.error(`❌ [AUTO-CONNECT] Failed to restore user ${userId}:`, err.message);
-                
+
                 try {
                     await User.findByIdAndUpdate(userId, {
                         whatsappStatus: 'disconnected',
@@ -297,9 +298,9 @@ async function autoConnectAllUsers() {
                 }
             }
         }
-        
+
         console.log('✅ [AUTO-CONNECT] Auto-restore completed\n');
-        
+
     } catch (err) {
         console.error('❌ [AUTO-CONNECT] Error:', err.message);
     }
@@ -311,72 +312,72 @@ async function autoConnectAllUsers() {
 
 async function restoreSession(userId) {
     const User = require('../models/User');
-    
+
     if (socketsMap.has(userId)) {
         console.log(`ℹ️ [RESTORE] User ${userId} already connected`);
         return;
     }
-    
+
     const userAuthPath = path.join(BASE_AUTH_PATH, `user-${userId}`);
-    
+
     try {
         loadStats(userId);
-        
+
         // ✅ Load user settings for read receipts
         const settings = await getUserSettings(userId);
         console.log(`⚙️ [RESTORE] Settings loaded - Read Receipts: ${settings.readReceiptsEnabled}`);
-        
+
         const { state, saveCreds } = await useMultiFileAuthState(userAuthPath);
         const { version } = await fetchLatestBaileysVersion();
-        
+
         const sock = makeWASocket({
             version,
             logger: pino({ level: 'silent' }),
             printQRInTerminal: false,
             auth: state,
-            
+
             // ✅ READ RECEIPTS CONFIG - FIXED FIELD NAME
             syncFullHistory: settings.readReceiptsEnabled !== false,
             markOnlineOnConnect: settings.readReceiptsEnabled !== false,
-            
+
             getMessage: async key => {
                 return proto.WebMessageInfo.fromObject({});
             },
             shouldIgnoreJid: (jid) => jid.includes('broadcast') || jid.endsWith('@g.us'),
         });
-        
+
         socketsMap.set(userId, sock);
         statusMap.set(userId, 'connecting');
-        
+
         sock.ev.on('creds.update', saveCreds);
-        
+
         sock.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect, qr } = update;
-            
+
             if (connection === 'close') {
                 const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-                
+
                 console.log(`🔴 [RESTORE] User ${userId} connection closed. Reconnecting: ${shouldReconnect}`);
-                
+
                 if (!shouldReconnect) {
                     console.log(`⚠️ [RESTORE] User ${userId} logged out - session invalid`);
                     socketsMap.delete(userId);
                     statusMap.set(userId, 'disconnected');
                     qrCodesMap.delete(userId);
-                    
+
                     try {
                         await User.findByIdAndUpdate(userId, {
                             whatsappStatus: 'disconnected',
                             whatsappError: 'Session expired - please reconnect'
                         });
-                    } catch (dbErr) {}
+                    } catch (dbErr) { }
                 } else {
                     console.log(`🔄 [RESTORE] Attempting reconnect for user ${userId}...`);
                     statusMap.set(userId, 'reconnecting');
-                    
+
                     const existingTimeout = reconnectTimeouts.get(userId);
                     if (existingTimeout) clearTimeout(existingTimeout);
-                    
+
                     const timeout = setTimeout(() => {
                         restoreSession(userId);
                     }, 5000);
@@ -386,35 +387,35 @@ async function restoreSession(userId) {
                 console.log(`✅ [RESTORE] User ${userId} connected successfully!`);
                 statusMap.set(userId, 'connected');
                 qrCodesMap.delete(userId);
-                
+
                 try {
                     await User.findByIdAndUpdate(userId, {
                         whatsappStatus: 'connected',
                         lastWhatsAppConnection: new Date(),
                         whatsappError: null
                     });
-                } catch (dbErr) {}
+                } catch (dbErr) { }
             } else if (connection === 'connecting') {
                 console.log(`🔄 [RESTORE] User ${userId} connecting...`);
                 statusMap.set(userId, 'connecting');
             }
-            
+
             if (qr) {
                 console.log(`⚠️ [RESTORE] User ${userId} session invalid - QR required`);
                 console.log(`💡 User needs to manually reconnect via /whatsapp page`);
-                
+
                 qrCodesMap.set(userId, qr);
                 statusMap.set(userId, 'qrcode');
-                
+
                 try {
                     await User.findByIdAndUpdate(userId, {
                         whatsappStatus: 'qrcode',
                         whatsappError: 'Session expired - please scan QR code'
                     });
-                } catch (dbErr) {}
+                } catch (dbErr) { }
             }
         });
-        
+
         sock.ev.on('messages.upsert', async m => {
             const message = m.messages[0];
             if (!message.key.fromMe) {
@@ -423,19 +424,19 @@ async function restoreSession(userId) {
                 updateChatActivity(userId, message.key.remoteJid, 'sent', message.messageTimestamp);
             }
         });
-        
+
     } catch (err) {
         console.error(`❌ [RESTORE] Error restoring user ${userId}:`, err.message);
-        
+
         statusMap.set(userId, 'disconnected');
-        
+
         try {
             await User.findByIdAndUpdate(userId, {
                 whatsappStatus: 'disconnected',
                 whatsappError: err.message
             });
-        } catch (dbErr) {}
-        
+        } catch (dbErr) { }
+
         throw err;
     }
 }
@@ -445,21 +446,26 @@ async function restoreSession(userId) {
 // ===========================================
 
 async function connectToWhatsApp(userId) {
+    if (!userId || userId === 'undefined') {
+        console.error('❌ [CONNECT] Cannot connect: userId is invalid', userId);
+        return;
+    }
     console.log(`\n🔌 [CONNECT] Starting WhatsApp connection for user: ${userId}`);
-    
+
+
     loadStats(userId);
-    
+
     const userAuthPath = path.join(BASE_AUTH_PATH, `user-${userId}`);
-    
+
     if (!fs.existsSync(userAuthPath)) {
         fs.mkdirSync(userAuthPath, { recursive: true });
     }
-    
+
     try {
         // ✅ Load user settings for read receipts
         const settings = await getUserSettings(userId);
         console.log(`⚙️ [CONNECT] Settings loaded - Read Receipts: ${settings.readReceiptsEnabled}`);
-        
+
         const { state, saveCreds } = await useMultiFileAuthState(userAuthPath);
         const { version } = await fetchLatestBaileysVersion();
 
@@ -468,17 +474,20 @@ async function connectToWhatsApp(userId) {
             logger: pino({ level: 'silent' }),
             printQRInTerminal: true,
             auth: state,
-            
+
             // ✅ READ RECEIPTS CONFIG - FIXED FIELD NAME
             syncFullHistory: settings.readReceiptsEnabled !== false,
             markOnlineOnConnect: settings.readReceiptsEnabled !== false,
-            
+
             getMessage: async key => {
                 return proto.WebMessageInfo.fromObject({});
             },
             shouldIgnoreJid: (jid) => jid.includes('broadcast') || jid.endsWith('@g.us'),
         });
-        
+
+        console.log(`📡 [CONNECT] Socket created for user ${userId}. Waiting for connection update...`);
+
+
         socketsMap.set(userId, sock);
         statusMap.set(userId, 'connecting');
 
@@ -490,21 +499,26 @@ async function connectToWhatsApp(userId) {
             if (qr) {
                 qrCodesMap.set(userId, qr);
                 statusMap.set(userId, 'qrcode');
-                console.log(`📸 [QR] QR Code generated for user ${userId}`);
+                console.log(`📸 [QR] QR Code generated for user ${userId}. Scan now!`);
             }
+
+            if (connection) {
+                console.log(`🔄 [UPDATE] Connection update for user ${userId}: ${connection}`);
+            }
+
 
             if (connection === 'close') {
                 const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-                
+
                 console.log(`🔴 [CLOSE] Connection closed for user ${userId}. Reason:`, lastDisconnect?.error?.message, '| Reconnecting:', shouldReconnect);
 
                 if (!shouldReconnect) {
                     console.log(`👋 [LOGOUT] Session logged out for user ${userId}. Cleaning up...`);
-                    
+
                     socketsMap.delete(userId);
                     qrCodesMap.delete(userId);
                     statusMap.set(userId, 'disconnected');
-                    
+
                     try {
                         fs.rmSync(userAuthPath, { recursive: true, force: true });
                         console.log(`✅ [CLEANUP] Auth files deleted for user ${userId}`);
@@ -518,11 +532,11 @@ async function connectToWhatsApp(userId) {
                     }, 2000);
                     return;
                 }
-                
+
                 statusMap.set(userId, 'reconnecting');
                 const existingTimeout = reconnectTimeouts.get(userId);
                 if (existingTimeout) clearTimeout(existingTimeout);
-                
+
                 const timeout = setTimeout(() => {
                     connectToWhatsApp(userId);
                 }, 5000);
@@ -531,13 +545,218 @@ async function connectToWhatsApp(userId) {
             } else if (connection === 'open') {
                 statusMap.set(userId, 'connected');
                 qrCodesMap.delete(userId);
-                
+
                 const userName = sock.user?.name || sock.user?.notify || sock.user?.id?.split(':')[0] || 'Unknown';
                 const userNumber = sock.user?.id?.split(':')[0] || 'Unknown';
                 console.log(`✅ [CONNECTED] User ${userId} connected as ${userName} (${userNumber})`);
+
+                try {
+                    const User = require('../models/User');
+                    await User.findByIdAndUpdate(userId, {
+                        whatsappStatus: 'connected',
+                        lastWhatsAppConnection: new Date(),
+                        whatsappError: null
+                    });
+                } catch (dbErr) { }
+            }
+
+        });
+
+        // ... inside connectToWhatsApp ...
+
+        sock.ev.on('messages.upsert', async m => {
+            try {
+                // ✅ NEW: Loop through ALL messages to capture History Sync
+                for (const msg of m.messages) {
+                    if (!msg.message) continue; // Ignore system messages
+
+                    const isFromMe = msg.key.fromMe;
+                    const remoteJid = msg.key.remoteJid;
+
+                    // Update Stats (Existing)
+                    if (!isFromMe) {
+                        updateChatActivity(userId, remoteJid, 'received', msg.messageTimestamp);
+                    } else {
+                        updateChatActivity(userId, remoteJid, 'sent', msg.messageTimestamp);
+                    }
+
+                    // ✅ NEW: Save Chat to Database
+                    const ChatMessage = require('../models/ChatMessage');
+                    const { getIO } = require('../services/socket');
+
+                    // Extract Message Content
+                    const messageType = Object.keys(msg.message)[0];
+
+                    // HANDLE REVOKE (Delete for Everyone)
+                    if (messageType === 'protocolMessage' && msg.message.protocolMessage?.type === 0) {
+                        console.log(`🛡️ [PERSISTENCE] Ignored WhatsApp deletion for msg: ${msg.message.protocolMessage.key.id}. Keeping persistent copy.`);
+                        continue; // Ignore completely to keep message in DB
+                    }
+
+                    let content = '';
+
+                    if (messageType === 'conversation') {
+                        content = msg.message.conversation;
+                    } else if (messageType === 'extendedTextMessage') {
+                        content = msg.message.extendedTextMessage.text;
+                    } else if (messageType === 'imageMessage') {
+                        content = msg.message.imageMessage.caption || '[Image]';
+                    } else {
+                        content = `[${messageType}]`;
+                    }
+
+                    // Verify if message already exists (deduplication)
+                    const existing = await ChatMessage.findOne({ msgId: msg.key.id });
+
+                    if (!existing) {
+                        // Extract phone number from remoteJid
+                        let extractedPhone = null;
+                        if (remoteJid.includes('@s.whatsapp.net')) {
+                            const before = remoteJid.split('@')[0].split(':')[0];
+                            extractedPhone = before.replace(/\D/g, '');
+                            if (extractedPhone.startsWith('0')) {
+                                extractedPhone = '62' + extractedPhone.substring(1);
+                            }
+                        }
+
+                        const newChat = await ChatMessage.create({
+                            userId: userId,
+                            remoteJid: remoteJid,
+                            fromMe: isFromMe,
+                            msgId: msg.key.id,
+                            messageType: messageType.replace('Message', ''),
+                            content: content,
+                            timestamp: new Date(msg.messageTimestamp * 1000), // Convert to JS Date
+                            pushName: msg.pushName || 'Unknown',
+                            extractedPhone: extractedPhone, // Save extracted phone
+                            status: isFromMe ? 'sent' : undefined
+                        });
+
+                        // Emit to frontend
+                        try {
+                            const io = getIO();
+                            io.emit('new_message', {
+                                userId,
+                                message: newChat
+                            });
+                        } catch (err) {
+                            // Socket might not be ready, ignore
+                        }
+                    }
+                }
+            } catch (err) {
+                console.error('❌ Error processing incoming message:', err);
             }
         });
-        
+
+    } catch (error) {
+        console.error(`❌ [ERROR] Connection error for user ${userId}:`, error.message);
+        statusMap.set(userId, 'error');
+    }
+}
+
+async function restoreSession(userId) {
+    if (!userId || userId === 'undefined') {
+        console.error('❌ [RESTORE] Cannot restore: userId is invalid', userId);
+        return;
+    }
+    console.log(`\n🔄 [RESTORE] Restoring session for user: ${userId}`);
+
+    const userAuthPath = path.join(BASE_AUTH_PATH, `user-${userId}`);
+
+    if (!fs.existsSync(userAuthPath)) {
+        console.log(`ℹ️ [RESTORE] No session folder for user ${userId}`);
+        return;
+    }
+
+    try {
+        const { state, saveCreds } = await useMultiFileAuthState(userAuthPath);
+        const { version } = await fetchLatestBaileysVersion();
+
+        const sock = makeWASocket({
+            version,
+            logger: pino({ level: 'silent' }),
+            printQRInTerminal: false,
+            auth: state,
+            getMessage: async key => {
+                return proto.WebMessageInfo.fromObject({});
+            },
+            shouldIgnoreJid: (jid) => jid.includes('broadcast') || jid.endsWith('@g.us'),
+        });
+
+        socketsMap.set(userId, sock);
+        statusMap.set(userId, 'connecting');
+
+        sock.ev.on('creds.update', saveCreds);
+
+        sock.ev.on('connection.update', async (update) => {
+            const { connection, lastDisconnect, qr } = update;
+
+            if (connection === 'close') {
+                const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+
+                console.log(`🔴 [RESTORE] User ${userId} connection closed. Reconnecting: ${shouldReconnect}`);
+
+                if (!shouldReconnect) {
+                    console.log(`⚠️ [RESTORE] User ${userId} logged out - session invalid`);
+                    socketsMap.delete(userId);
+                    statusMap.set(userId, 'disconnected');
+                    qrCodesMap.delete(userId);
+
+                    try {
+                        const User = require('../models/User');
+                        await User.findByIdAndUpdate(userId, {
+                            whatsappStatus: 'disconnected',
+                            whatsappError: 'Session expired - please reconnect'
+                        });
+                    } catch (dbErr) { }
+                } else {
+                    console.log(`🔄 [RESTORE] Attempting reconnect for user ${userId}...`);
+                    statusMap.set(userId, 'reconnecting');
+
+                    const existingTimeout = reconnectTimeouts.get(userId);
+                    if (existingTimeout) clearTimeout(existingTimeout);
+
+                    const timeout = setTimeout(() => {
+                        restoreSession(userId);
+                    }, 5000);
+                    reconnectTimeouts.set(userId, timeout);
+                }
+            } else if (connection === 'open') {
+                console.log(`✅ [RESTORE] User ${userId} connected successfully!`);
+                statusMap.set(userId, 'connected');
+                qrCodesMap.delete(userId);
+
+                try {
+                    const User = require('../models/User');
+                    await User.findByIdAndUpdate(userId, {
+                        whatsappStatus: 'connected',
+                        lastWhatsAppConnection: new Date(),
+                        whatsappError: null
+                    });
+                } catch (dbErr) { }
+            } else if (connection === 'connecting') {
+                console.log(`🔄 [RESTORE] User ${userId} connecting...`);
+                statusMap.set(userId, 'connecting');
+            }
+
+            if (qr) {
+                console.log(`⚠️ [RESTORE] User ${userId} session invalid - QR required`);
+                console.log(`💡 User needs to manually reconnect via /whatsapp page`);
+
+                qrCodesMap.set(userId, qr);
+                statusMap.set(userId, 'qrcode');
+
+                try {
+                    const User = require('../models/User');
+                    await User.findByIdAndUpdate(userId, {
+                        whatsappStatus: 'qrcode',
+                        whatsappError: 'Session expired - please scan QR code'
+                    });
+                } catch (dbErr) { }
+            }
+        });
+
         sock.ev.on('messages.upsert', async m => {
             const message = m.messages[0];
             if (!message.key.fromMe) {
@@ -546,10 +765,21 @@ async function connectToWhatsApp(userId) {
                 updateChatActivity(userId, message.key.remoteJid, 'sent', message.messageTimestamp);
             }
         });
-        
-    } catch (error) {
-        console.error(`❌ [ERROR] Connection error for user ${userId}:`, error.message);
-        statusMap.set(userId, 'error');
+
+    } catch (err) {
+        console.error(`❌ [RESTORE] Error restoring user ${userId}:`, err.message);
+
+        statusMap.set(userId, 'disconnected');
+
+        try {
+            const User = require('../models/User');
+            await User.findByIdAndUpdate(userId, {
+                whatsappStatus: 'disconnected',
+                whatsappError: err.message
+            });
+        } catch (dbErr) { }
+
+        throw err;
     }
 }
 
@@ -558,10 +788,12 @@ async function connectToWhatsApp(userId) {
 // ===========================================
 
 async function disconnectWhatsAppClient(userId) {
+    if (!userId || userId === 'undefined') return;
     console.log(`\n🚪 [DISCONNECT] Manual disconnect requested for user: ${userId}`);
-    
+
+
     const sock = socketsMap.get(userId);
-    
+
     if (sock) {
         try {
             await sock.logout();
@@ -573,13 +805,13 @@ async function disconnectWhatsAppClient(userId) {
 
     qrCodesMap.delete(userId);
     statusMap.set(userId, 'disconnected');
-    
+
     const existingTimeout = reconnectTimeouts.get(userId);
     if (existingTimeout) {
         clearTimeout(existingTimeout);
         reconnectTimeouts.delete(userId);
     }
-    
+
     const userAuthPath = path.join(BASE_AUTH_PATH, `user-${userId}`);
     try {
         console.log(`🗑️ [CLEANUP] Deleting session files for user ${userId}...`);
@@ -588,7 +820,7 @@ async function disconnectWhatsAppClient(userId) {
     } catch (e) {
         console.error(`⚠️ [CLEANUP] Failed to delete auth files for user ${userId}:`, e.message);
     }
-    
+
     console.log(`🔄 [RESTART] Initializing new session for user ${userId}...`);
     setTimeout(() => {
         connectToWhatsApp(userId);
@@ -603,27 +835,27 @@ async function sendMessage(userId, nomor, pesan) {
     try {
         const sock = socketsMap.get(userId);
         const status = statusMap.get(userId);
-        
+
         if (!sock || status !== 'connected') {
             throw new Error('WhatsApp is not connected for this user');
         }
-        
+
         let waNumber = nomor.replace(/\D/g, '');
-        
+
         if (waNumber.startsWith('0')) {
             waNumber = '62' + waNumber.substring(1);
         } else if (waNumber.startsWith('8')) {
             waNumber = '62' + waNumber;
         }
-        
+
         const jid = waNumber + '@s.whatsapp.net';
-        
+
         console.log(`\n📤 [SEND] User ${userId} sending message to ${jid}...`);
-        
+
         await sock.sendMessage(jid, { text: pesan });
-        
+
         console.log(`✅ [SEND] Message sent successfully by user ${userId} to ${waNumber}`);
-        
+
         updateChatActivity(userId, jid, 'sent');
         updateDeliveryStatus(userId, true);
 
@@ -632,12 +864,12 @@ async function sendMessage(userId, nomor, pesan) {
             to: waNumber,
             sentAt: new Date().toISOString()
         };
-        
+
     } catch (error) {
         console.error(`❌ [SEND] Error for user ${userId}:`, error.message);
-        
+
         updateDeliveryStatus(userId, false);
-        
+
         return {
             success: false,
             error: error.message
@@ -659,10 +891,10 @@ function getQrCode(userId) {
 
 function getStoreStats(userId) {
     checkDailyReset(userId);
-    
+
     const stats = statsMap.get(userId);
     const sock = socketsMap.get(userId);
-    
+
     if (!stats) {
         return {
             messagesToday: '0',
@@ -677,43 +909,61 @@ function getStoreStats(userId) {
             deviceInfo: null
         };
     }
-    
+
     const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const activeChats = Object.values(stats.chats).filter(chat => chat.lastActivity > oneDayAgo).length.toString();
-    
+
     const responseTime = calculateAverageResponseTime(stats.responseTimes || []);
     const successRate = calculateSuccessRate(stats.deliveryStatus || { success: 0, failed: 0 });
-    
+
     let deviceInfo = null;
-    if (sock && sock.user && statusMap.get(userId) === 'connected') {
-        const userIdWA = sock.user.id ? sock.user.id.split(':')[0] : 'Unknown';
-        
-        const rawName = sock.user.name || sock.user.notify || '';
-        
-        const isNameSameAsNumber = 
-            rawName === userIdWA || 
+    if (statusMap.get(userId) === 'connected') {
+        const sock = socketsMap.get(userId);
+
+        // DEBUG: Log everything we know about the user
+        // console.log(`🔍 [DEBUG] User ${userId} Socket User:`, JSON.stringify(sock?.user, null, 2));
+        // console.log(`🔍 [DEBUG] User ${userId} Auth Me:`, JSON.stringify(sock?.authState?.creds?.me, null, 2));
+
+        // Triangulate User ID/Number
+        const rawId = sock?.user?.id || sock?.authState?.creds?.me?.id;
+        const userIdWA = rawId ? rawId.split(':')[0] : 'Unknown';
+
+        // Triangulate Name
+        // Baileys often puts the pushname in 'notify' or 'name' of the contact
+        const rawName = sock?.user?.name || sock?.user?.notify || sock?.authState?.creds?.me?.name || 'WhatsApp User';
+
+        // Filter out if name is just the phone number
+        const isNameSameAsNumber =
+            rawName === userIdWA ||
             rawName === `+${userIdWA}` ||
-            rawName === `${userIdWA}` ||
             rawName.replace(/\D/g, '') === userIdWA;
-        
-        const userName = (isNameSameAsNumber || !rawName) 
-            ? 'WhatsApp User'
-            : rawName;
-        
-        const platformName = 
-            sock.user.platform || 
-            sock.user.phone?.platform || 
-            sock.user.phone?.device_manufacturer || 
-            sock.browser?.join(' ') ||
-            'WhatsApp MD Client';
-            
+
+        const userName = (isNameSameAsNumber) ? 'WhatsApp User' : rawName;
+
+        // Triangulate Platform
+        // "WhatsApp MD Client" is the default from our previous code, let's try to find the real one
+        // Note: interacting with the phone is required for some info to sync, but let's try available fields
+        // In multi-device, the platform might be in the device info of the session
+        let platformName = 'Unknown Platform';
+
+        if (sock?.user?.platform) {
+            platformName = sock.user.platform;
+        } else if (sock?.authState?.creds?.platform) {
+            platformName = sock.authState.creds.platform;
+        } else if (userIdWA.length > 13) {
+            // Basic heuristic: Virtual numbers often different length, but hard to guess OS
+            platformName = 'Multi-Device';
+        } else {
+            platformName = 'WhatsApp Mobile';
+        }
+
         deviceInfo = {
             number: userIdWA,
             name: userName,
             platform: platformName
         };
     }
-    
+
     return {
         messagesToday: (stats.sentToday + stats.receivedToday).toString(),
         stats: {
@@ -734,7 +984,7 @@ function getStoreStats(userId) {
 
 async function cleanupAllConnections() {
     console.log('🧹 [CLEANUP] Cleaning up all WhatsApp connections...');
-    
+
     for (const [userId, sock] of socketsMap.entries()) {
         try {
             sock.end();
@@ -743,11 +993,11 @@ async function cleanupAllConnections() {
             console.error(`❌ [CLEANUP] Error closing user ${userId}:`, err.message);
         }
     }
-    
+
     socketsMap.clear();
     statusMap.clear();
     qrCodesMap.clear();
-    
+
     console.log('✅ [CLEANUP] All connections cleaned');
 }
 
@@ -764,5 +1014,6 @@ module.exports = {
     getStoreStats,
     autoConnectAllUsers,
     restoreSession,
-    cleanupAllConnections
+    cleanupAllConnections,
+    socketsMap // ✅ Exporting this to allow direct access in route handlers
 };

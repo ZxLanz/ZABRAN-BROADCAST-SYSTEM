@@ -19,28 +19,28 @@ router.use(authenticate);
 router.get('/stats/summary', async (req, res) => {
   try {
     const { role, id: userId } = req.user;
-    
+
     let filter = {};
     if (role !== 'admin') {
       filter = { createdBy: userId };
     }
-    
+
     const total = await Customer.countDocuments(filter);
-    const active = await Customer.countDocuments({ 
-      ...filter, 
-      status: 'active' 
+    const active = await Customer.countDocuments({
+      ...filter,
+      status: 'active'
     });
-    const inactive = await Customer.countDocuments({ 
-      ...filter, 
-      status: 'inactive' 
+    const inactive = await Customer.countDocuments({
+      ...filter,
+      status: 'inactive'
     });
-    const blocked = await Customer.countDocuments({ 
-      ...filter, 
-      status: 'blocked' 
+    const blocked = await Customer.countDocuments({
+      ...filter,
+      status: 'blocked'
     });
-    
+
     console.log(`[${role.toUpperCase()}] Stats: ${total} total customers`);
-    
+
     res.json({
       success: true,
       data: {
@@ -51,7 +51,7 @@ router.get('/stats/summary', async (req, res) => {
         growthRate: '0%'
       }
     });
-    
+
   } catch (error) {
     console.error('Error fetching stats:', error);
     res.status(500).json({
@@ -68,7 +68,7 @@ router.get('/', async (req, res) => {
     const { role, id: userId } = req.user;
 
     let filter = {};
-    
+
     if (role === 'admin') {
       filter = {};
     } else {
@@ -96,6 +96,94 @@ router.get('/', async (req, res) => {
       message: 'Gagal mengambil data customer',
       error: error.message
     });
+  }
+});
+
+// GET CONTACTS FROM CHAT FOR SYNC
+router.get('/sync-from-chat', async (req, res) => {
+  try {
+    const { id: userId } = req.user;
+    const ChatMessage = require('../models/ChatMessage');
+    const mongoose = require('mongoose');
+
+    // Ambil nomor unik dari history chat yang BELUM jadi customer
+    const existingCustomers = await Customer.find({ createdBy: userId }).distinct('phone');
+
+    const uniqueContacts = await ChatMessage.aggregate([
+      { $match: { userId: new mongoose.Types.ObjectId(userId) } },
+      { $sort: { timestamp: -1 } },
+      {
+        $group: {
+          _id: "$remoteJid",
+          pushName: { $first: "$pushName" },
+          lastMessage: { $first: "$content" },
+          timestamp: { $first: "$timestamp" }
+        }
+      },
+      {
+        $project: {
+          jid: "$_id",
+          phone: {
+            $reduce: {
+              input: { $regexFindAll: { input: "$_id", regex: "\\d+" } },
+              initialValue: "",
+              in: { $concat: ["$$value", "$$this.match"] }
+            }
+          },
+          name: { $cond: [{ $and: [{ $ne: ["$pushName", "Unknown"] }, { $ne: ["$pushName", null] }] }, "$pushName", "Unknown Contact"] },
+          lastMessage: 1,
+          timestamp: 1
+        }
+      },
+      // Filter yang belum ada di database customers
+      { $match: { phone: { $nin: existingCustomers } } },
+      { $sort: { timestamp: -1 } }
+    ]);
+
+    res.json({ success: true, data: uniqueContacts });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// BULK SYNC FROM CHAT
+router.post('/sync-from-chat', async (req, res) => {
+  try {
+    const { id: userId } = req.user;
+    const { contacts } = req.body; // Array: [{ name, phone }]
+
+    if (!contacts || !Array.isArray(contacts)) {
+      return res.status(400).json({ success: false, message: 'Invalid contacts data' });
+    }
+
+    const newCustomers = contacts.map(c => ({
+      name: c.name || `User ${c.phone}`,
+      phone: c.phone,
+      createdBy: userId,
+      status: 'active'
+    }));
+
+    // Gunakan insertMany dengan ordered:false agar jika ada duplikat yang lolos tetap lanjut save sisanya
+    const result = await Customer.insertMany(newCustomers, { ordered: false });
+
+    notifyCustomerImported(userId, result.length);
+
+    res.json({
+      success: true,
+      message: `Berhasil menyinkronkan ${result.length} kontak.`,
+      count: result.length
+    });
+  } catch (error) {
+    // Handle partially successful insertion (duplicates)
+    if (error.code === 11000) {
+      const insertedCount = error.insertedDocs?.length || 0;
+      return res.json({
+        success: true,
+        message: `Berhasil menyinkronkan ${insertedCount} kontak (beberapa nomor sudah ada).`,
+        count: insertedCount
+      });
+    }
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 
@@ -154,14 +242,14 @@ router.post('/',
       }
 
       const { id: userId } = req.user;
-      
-      const { 
-        name, 
-        phone, 
-        email, 
-        address, 
-        tags, 
-        status, 
+
+      const {
+        name,
+        phone,
+        email,
+        address,
+        tags,
+        status,
         division,
         company,
         city,
@@ -177,7 +265,7 @@ router.post('/',
       }
 
       // Check duplicate phone
-      const existingCustomer = await Customer.findOne({ 
+      const existingCustomer = await Customer.findOne({
         phone: normalizedPhone,
         createdBy: userId
       });
@@ -256,21 +344,21 @@ router.put('/:id',
         });
       }
 
-      if (role !== 'admin' && 
-          customer.createdBy?.toString() !== userId) {
+      if (role !== 'admin' &&
+        customer.createdBy?.toString() !== userId) {
         return res.status(403).json({
           success: false,
           message: 'Anda tidak memiliki akses untuk mengubah customer ini'
         });
       }
 
-      const { 
-        name, 
-        phone, 
-        email, 
-        address, 
-        tags, 
-        status, 
+      const {
+        name,
+        phone,
+        email,
+        address,
+        tags,
+        status,
         division,
         company,
         city,
@@ -349,8 +437,8 @@ router.delete('/:id', async (req, res) => {
       });
     }
 
-    if (role !== 'admin' && 
-        customer.createdBy?.toString() !== userId) {
+    if (role !== 'admin' &&
+      customer.createdBy?.toString() !== userId) {
       return res.status(403).json({
         success: false,
         message: 'Anda tidak memiliki akses untuk menghapus customer ini'
@@ -410,9 +498,9 @@ router.post('/import', async (req, res) => {
         }
 
         // Check duplicate
-        const existing = await Customer.findOne({ 
+        const existing = await Customer.findOne({
           phone,
-          createdBy: userId 
+          createdBy: userId
         });
 
         if (existing) {

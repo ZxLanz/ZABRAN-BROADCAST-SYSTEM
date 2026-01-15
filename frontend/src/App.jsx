@@ -28,11 +28,12 @@ import Templates from "./pages/Templates";
 import WhatsApp from "./pages/WhatsApp";
 import Reports from "./pages/Reports";
 import AIGenerator from "./pages/AIGenerator";
-import Customers from "./pages/Customers";
+import LiveChat from "./pages/LiveChat"; // ✅ CHANGED from Customers
+import Customers from "./pages/Customers"; // ✅ RESTORED
 import Broadcast from "./pages/Broadcast";
 import Unauthorized from "./pages/Unauthorized";
-import Notifications from "./pages/Notifications"; // ✅ NEW
-import Profile from "./pages/Profile"; // ✅ NEW
+import Notifications from "./pages/Notifications";
+import Profile from "./pages/Profile";
 
 function App() {
   // ✅ SETUP AXIOS INTERCEPTOR - AUTO ATTACH TOKEN
@@ -41,11 +42,11 @@ function App() {
     const requestInterceptor = axios.interceptors.request.use(
       (config) => {
         const token = localStorage.getItem('token');
-        
+
         if (token) {
           config.headers.Authorization = `Bearer ${token}`;
         }
-        
+
         return config;
       },
       (error) => {
@@ -60,14 +61,14 @@ function App() {
         if (error.response?.status === 401) {
           // ✅ Only logout if we're not already on login page
           const currentPath = window.location.pathname;
-          
+
           if (currentPath !== '/login') {
             console.log('❌ 401 Unauthorized - Token expired, logging out...');
-            
+
             // Token invalid/expired - logout
             localStorage.removeItem('token');
             localStorage.removeItem('user');
-            
+
             // Redirect to login
             window.location.href = '/login';
           }
@@ -138,16 +139,17 @@ function App() {
 
                 {/* ADMIN ONLY */}
                 <Route
-                  path="customers"
+                  path="chats"
                   element={
                     <AdminOnly>
-                      <Customers />
+                      <LiveChat />
                     </AdminOnly>
                   }
                 />
 
                 {/* MAIN PAGES (ALL USERS) */}
                 <Route path="broadcast" element={<Broadcast />} />
+                <Route path="customers" element={<Customers />} />
                 <Route path="templates" element={<Templates />} />
                 <Route path="ai-generator" element={<AIGenerator />} />
 

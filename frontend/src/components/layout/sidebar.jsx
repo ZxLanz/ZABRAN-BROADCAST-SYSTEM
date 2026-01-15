@@ -1,17 +1,19 @@
 // src/components/layout/Sidebar.jsx
 import { useState, useRef, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { 
-  LayoutDashboard, 
-  Users, 
-  Megaphone, 
+import {
+  MessageSquare, // ✅ ADDED
+  LayoutDashboard,
+  Users,
+  Megaphone,
   FileText,
   Smartphone,
   BarChart3,
   Settings as SettingsIcon,
   Sparkles,
   LogOut,
-  User
+  User,
+  ChevronRight
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
@@ -20,15 +22,13 @@ export default function Sidebar() {
   const { user, logout } = useAuth();
   const [isHovered, setIsHovered] = useState(false);
   const hoverTimeoutRef = useRef(null);
-  const clickLockRef = useRef(false);
-  
+
   // Main menu items
   const mainMenuItems = [
     { name: 'Dashboard', path: '/', icon: LayoutDashboard },
-    ...(user?.role === 'admin' 
-      ? [{ name: 'Customers', path: '/customers', icon: Users }]
-      : []),
+    { name: 'Live Chat', path: '/chats', icon: MessageSquare },
     { name: 'Broadcast', path: '/broadcast', icon: Megaphone },
+    { name: 'Customers', path: '/customers', icon: Users },
     { name: 'Templates', path: '/templates', icon: FileText },
     { name: 'AI Generator', path: '/ai-generator', icon: Sparkles },
   ];
@@ -41,218 +41,166 @@ export default function Sidebar() {
   ];
 
   const isActive = (path) => {
-    if (path === '/') {
-      return location.pathname === '/';
-    }
+    if (path === '/') return location.pathname === '/';
     return location.pathname.startsWith(path);
   };
 
   const handleMouseEnter = () => {
-    if (clickLockRef.current) return;
-    if (hoverTimeoutRef.current) {
-      clearTimeout(hoverTimeoutRef.current);
-    }
+    if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
     setIsHovered(true);
   };
 
   const handleMouseLeave = () => {
-    if (clickLockRef.current) return;
     hoverTimeoutRef.current = setTimeout(() => {
       setIsHovered(false);
     }, 300);
   };
 
-  useEffect(() => {
-    return () => {
-      if (hoverTimeoutRef.current) {
-        clearTimeout(hoverTimeoutRef.current);
-      }
-    };
-  }, []);
-
   const MenuItem = ({ item }) => {
     const Icon = item.icon;
     const active = isActive(item.path);
 
-    const handleClick = () => {
-      if (hoverTimeoutRef.current) {
-        clearTimeout(hoverTimeoutRef.current);
-      }
-      setIsHovered(false);
-      clickLockRef.current = true;
-      setTimeout(() => {
-        clickLockRef.current = false;
-      }, 500);
-    };
-
     return (
       <Link
         to={item.path}
-        onClick={handleClick}
         className={`
-          flex items-center gap-2.5 px-4 py-2.5 mx-3 rounded-lg
-          transition-all duration-200 ease-out relative
-          ${active 
-            ? 'bg-primary-500/10 text-primary-500 font-medium' 
-            : 'text-gray-400 hover:bg-white/5 hover:text-white'
+          group flex items-center gap-3 px-3 py-3 mx-3 rounded-xl
+          transition-all duration-300 ease-out relative overflow-hidden
+          ${active
+            ? 'bg-gradient-to-r from-primary-500/20 to-transparent text-primary-400'
+            : 'text-gray-400 hover:text-white hover:bg-white/5'
           }
-          ${!isHovered ? 'justify-center px-3' : ''}
+          ${!isHovered ? 'justify-center' : ''}
         `}
-        title={!isHovered ? item.name : ''}
       >
         {active && (
-          <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-7 bg-primary-500 rounded-r-full" />
+          <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-primary-500 rounded-r-full shadow-lg shadow-primary-500/50" />
         )}
-        <Icon className="w-[18px] h-[18px] flex-shrink-0" strokeWidth={1.5} />
-        <span 
+
+        <Icon
           className={`
-            text-[13px] whitespace-nowrap transition-opacity duration-200
-            ${isHovered ? 'opacity-100 delay-75' : 'opacity-0'}
-            overflow-hidden
+            w-5 h-5 flex-shrink-0 transition-all duration-300
+            ${active ? 'text-primary-400 drop-shadow-md' : 'group-hover:text-white'}
+          `}
+          strokeWidth={active ? 2 : 1.5}
+        />
+
+        <span
+          className={`
+            text-[14px] font-medium whitespace-nowrap transition-all duration-300
+            ${isHovered ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-4 absolute'}
           `}
         >
           {item.name}
         </span>
+
+        {isHovered && active && (
+          <ChevronRight className="w-4 h-4 ml-auto text-primary-500/50" />
+        )}
       </Link>
     );
   };
 
   return (
-    <aside 
+    <aside
       className={`
-        fixed left-0 top-0 z-50
-        bg-navy-800 h-screen 
-        flex flex-col shadow-2xl
-        transition-all duration-300 ease-out will-change-[width]
-        ${isHovered ? 'w-64' : 'w-20'}
+        fixed left-0 top-0 z-50 h-screen 
+        bg-navy-900 border-r border-white/5
+        flex flex-col shadow-2xl shadow-black/50
+        transition-all duration-500 ease-[cubic-bezier(0.4,0,0.2,1)]
+        backdrop-blur-xl
+        ${isHovered ? 'w-72' : 'w-[88px]'}
       `}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
     >
-      
-      {/* Header */}
-      <div className="p-4 flex items-center gap-2.5 min-h-[72px] border-b border-navy-700/50">
-        <div className="w-10 h-10 bg-gradient-to-br from-primary-400 via-primary-500 to-primary-600 rounded-lg flex items-center justify-center flex-shrink-0 shadow-lg">
-          <span className="text-navy-800 font-bold text-base">Z</span>
-        </div>
-        <div
-          className={`
-            transition-opacity duration-200 overflow-hidden whitespace-nowrap
-            ${isHovered ? 'opacity-100 delay-75' : 'opacity-0'}
-          `}
-        >
-          <div className="font-bold text-base text-white leading-tight">ZABRAN</div>
-          <div className="text-xs text-gray-400 leading-tight">Broadcast</div>
+
+      {/* Brand Header */}
+      <div className="h-20 flex items-center justify-center relative border-b border-white/5 mx-4">
+        <div className={`
+          flex items-center gap-3 transition-all duration-500
+          ${isHovered ? 'w-full px-2' : 'justify-center'}
+        `}>
+          {/* Logo Icon */}
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center shadow-lg shadow-primary-500/20 flex-shrink-0">
+            <span className="text-navy-900 font-black text-xl font-sans">Z</span>
+          </div>
+
+          {/* Logo Text (Revealed on Hover) */}
+          <div className={`
+            overflow-hidden transition-all duration-500 flex flex-col justify-center
+            ${isHovered ? 'opacity-100 w-auto' : 'opacity-0 w-0'}
+          `}>
+            <h1 className="text-lg font-black text-white leading-none tracking-tight">ZABRAN</h1>
+            <span className="text-[10px] text-primary-400 font-bold tracking-widest uppercase mt-1">Broadcast</span>
+          </div>
         </div>
       </div>
 
-      {/* Scrollable Menu Area - SEMUA MENU TERMASUK USER & LOGOUT */}
-      <div className="flex-1 overflow-y-auto sidebar-scroll">
-        {/* Main Menu */}
-        <div className="py-6">
-          <div className="mb-8">
-            <div 
-              className={`
-                px-6 mb-1.5 transition-opacity duration-200
-                ${isHovered ? 'opacity-100 delay-75' : 'opacity-0'}
-              `}
-            >
-              <span className="text-[9px] font-semibold uppercase tracking-widest text-gray-500/70 whitespace-nowrap">
-                Main Menu
-              </span>
+      {/* Navigation */}
+      <div className="flex-1 overflow-y-auto py-6 space-y-8 scrollbar-hide">
+
+        {/* Main Section */}
+        <div>
+          {isHovered && (
+            <div className="px-6 mb-3 text-[10px] font-bold text-gray-500 uppercase tracking-widest animate-fade-in">
+              Menu
             </div>
-            <nav className="space-y-1">
-              {mainMenuItems.map((item) => (
-                <MenuItem key={item.path} item={item} />
-              ))}
-            </nav>
+          )}
+          <nav className="space-y-1">
+            {mainMenuItems.map((item) => (
+              <MenuItem key={item.path} item={item} />
+            ))}
+          </nav>
+        </div>
+
+        {/* Tools Section */}
+        <div>
+          {isHovered && (
+            <div className="px-6 mb-3 text-[10px] font-bold text-gray-500 uppercase tracking-widest animate-fade-in">
+              Tools
+            </div>
+          )}
+          <nav className="space-y-1">
+            {toolsMenuItems.map((item) => (
+              <MenuItem key={item.path} item={item} />
+            ))}
+          </nav>
+        </div>
+      </div>
+
+      {/* User Profile Footer */}
+      <div className="p-4 border-t border-white/5 bg-black/20">
+        <div className={`
+          flex items-center gap-3 rounded-xl p-2
+          ${isHovered ? 'bg-white/5' : 'justify-center hover:bg-white/5'}
+          transition-colors duration-300 cursor-pointer group
+        `}>
+          <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-navy-700 to-navy-600 border border-white/10 flex items-center justify-center flex-shrink-0 group-hover:border-primary-500/50 transition-colors">
+            <User className="w-5 h-5 text-gray-400 group-hover:text-primary-400" />
           </div>
 
-          {/* Tools Menu */}
-          <div>
-            {isHovered ? (
-              <div 
-                className={`
-                  px-6 mb-1.5 transition-opacity duration-200
-                  ${isHovered ? 'opacity-100 delay-75' : 'opacity-0'}
-                `}
-              >
-                <span className="text-[9px] font-semibold uppercase tracking-widest text-gray-500/70 whitespace-nowrap">
-                  Tools & Settings
-                </span>
-              </div>
-            ) : (
-              <div className="mx-3 mb-3 border-t border-navy-700/50"></div>
-            )}
-            <nav className="space-y-1">
-              {toolsMenuItems.map((item) => (
-                <MenuItem key={item.path} item={item} />
-              ))}
-            </nav>
-          </div>
-
-          {/* Divider */}
-          <div className="mx-3 my-4 border-t border-navy-700/50"></div>
-
-          {/* User Info - CONSISTENT SIZE */}
-          <div 
-            className={`
-              flex items-center gap-2.5 px-4 py-2.5 mx-3 rounded-lg
-              transition-all duration-200 ease-out relative
-              ${!isHovered ? 'justify-center px-3' : ''}
-            `}
-          >
-            <div className="w-[18px] h-[18px] flex items-center justify-center flex-shrink-0">
-              <User className="w-[18px] h-[18px] text-gray-400" strokeWidth={1.5} />
+          <div className={`
+            overflow-hidden transition-all duration-300
+            ${isHovered ? 'opacity-100 w-auto' : 'opacity-0 w-0 hidden'}
+          `}>
+            <div className="text-sm font-semibold text-white truncate max-w-[120px]">
+              {user?.name || 'User'}
             </div>
-            <div
-              className={`
-                transition-opacity duration-200 overflow-hidden
-                ${isHovered ? 'opacity-100 delay-75' : 'opacity-0'}
-              `}
-            >
-              <div className="text-[13px] font-medium text-white leading-tight truncate max-w-[160px]">
-                {user?.name || 'User'}
-              </div>
-              <div className="flex items-center gap-1.5 mt-0.5">
-                <span className={`
-                  px-1.5 py-0.5 rounded text-[9px] font-bold uppercase leading-none
-                  ${user?.role === 'admin' 
-                    ? 'bg-primary-500/20 text-primary-400' 
-                    : 'bg-navy-700 text-gray-400'
-                  }
-                `}>
-                  {user?.role || 'User'}
-                </span>
-              </div>
+            <div className="text-xs text-primary-400 font-medium">
+              {user?.role === 'admin' ? 'Administrator' : 'User'}
             </div>
           </div>
 
-          {/* Logout - CONSISTENT SIZE */}
-          <div className="px-0 pb-6">
+          {isHovered && (
             <button
               onClick={logout}
-              className={`
-                flex items-center gap-2.5 px-4 py-2.5 mx-3 rounded-lg
-                transition-all duration-200 ease-out relative
-                text-red-400 hover:bg-white/5 hover:text-red-300
-                ${!isHovered ? 'justify-center px-3' : ''}
-              `}
-              title={!isHovered ? 'Logout' : ''}
+              className="ml-auto p-2 rounded-lg hover:bg-red-500/20 text-gray-500 hover:text-red-400 transition-colors"
+              title="Logout"
             >
-              <LogOut className="w-[18px] h-[18px] flex-shrink-0" strokeWidth={1.5} />
-              <span 
-                className={`
-                  text-[13px] whitespace-nowrap transition-opacity duration-200
-                  ${isHovered ? 'opacity-100 delay-75' : 'opacity-0'}
-                  overflow-hidden
-                `}
-              >
-                Logout
-              </span>
+              <LogOut size={16} />
             </button>
-          </div>
-
+          )}
         </div>
       </div>
 

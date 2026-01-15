@@ -1,67 +1,70 @@
-// src/components/DeleteConfirm.jsx
-import { X, AlertTriangle } from "lucide-react";
+import { X, AlertTriangle, Trash2 } from "lucide-react";
 
-/**
- * Komponen modal konfirmasi penghapusan yang dapat digunakan kembali.
- * @param {object} props
- * @param {boolean} props.open - Status modal (buka/tutup)
- * @param {function} props.onClose - Fungsi yang dipanggil saat modal ditutup
- * @param {function} props.onConfirm - Fungsi yang dipanggil saat tombol konfirmasi ditekan
- * @param {string} [props.title="Confirm Deletion"] - Judul modal
- * @param {string} [props.message="Are you sure you want to delete this item? This action cannot be undone."] - Pesan konfirmasi
- * @param {boolean} [props.isLoading=false] - Status loading untuk tombol konfirmasi
- */
-export default function DeleteConfirm({ 
-  open, 
-  onClose, 
-  onConfirm, 
-  title = "Confirm Deletion", 
-  message = "Are you sure you want to delete this item? This action cannot be undone.",
+export default function DeleteConfirm({
+  open,
+  onClose,
+  onConfirm,
+  title = "Permanent Deletion",
+  message = "Are you sure you want to delete this record? This action cannot be reversed.",
   isLoading = false
 }) {
   if (!open) return null;
 
   return (
-    <div 
-      className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 transition-opacity duration-300"
+    <div
+      className="fixed inset-0 bg-navy-900/60 backdrop-blur-sm z-[200] flex items-center justify-center p-4 animate-in fade-in duration-300"
       onClick={onClose}
     >
-      <div 
-        className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-scale-in"
-        onClick={(e) => e.stopPropagation()} // Prevent closing on modal body click
+      <div
+        className="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-300 border border-white/20"
+        onClick={(e) => e.stopPropagation()}
       >
-        
-        {/* Modal Header */}
-        <div className="bg-red-50 p-6 flex items-start justify-between border-b border-red-200">
-            <div className="flex items-center gap-3">
-                <AlertTriangle className="w-6 h-6 text-red-600" />
-                <h3 className="text-xl font-bold text-red-700">{title}</h3>
+
+        {/* Header */}
+        <div className="bg-red-600 px-6 py-6 relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 -rotate-45 translate-x-10 -translate-y-10 rounded-full blur-2xl"></div>
+          <div className="relative z-10 flex flex-col items-center text-center">
+            <div className="w-14 h-14 bg-white/20 backdrop-blur-md rounded-2xl flex items-center justify-center mb-3 border border-white/20 shadow-sm">
+              <Trash2 className="w-7 h-7 text-white" />
             </div>
-            <button onClick={onClose} className="p-2 rounded-full text-gray-400 hover:bg-red-100 hover:text-red-600 transition-colors">
-              <X className="w-5 h-5" />
-            </button>
-        </div>
-
-        {/* Modal Body */}
-        <div className="p-6">
-          <p className="text-gray-700">{message}</p>
-        </div>
-
-        {/* Modal Footer */}
-        <div className="bg-gray-50 p-4 flex justify-end gap-3 border-t border-gray-200">
-          <button 
-            onClick={onClose} 
-            className="px-5 py-2 rounded-xl border border-gray-300 text-gray-700 font-semibold hover:bg-gray-100 transition-colors"
-            disabled={isLoading}
+            <h3 className="text-lg font-bold text-white tracking-tight">{title}</h3>
+            <p className="text-red-100/70 text-[10px] font-bold mt-0.5 uppercase tracking-widest">Action Required</p>
+          </div>
+          <button
+            onClick={onClose}
+            className="absolute top-4 right-4 p-2 rounded-lg text-white/40 hover:text-white hover:bg-white/10 transition-all"
           >
-            Cancel
+            <X className="w-5 h-5" />
           </button>
-          <button 
-            onClick={onConfirm} 
-            className="px-5 py-2 rounded-xl bg-red-600 text-white font-semibold hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        </div>
+
+        {/* Body */}
+        <div className="p-6 text-center">
+          <p className="text-navy-900 font-medium text-sm leading-relaxed">{message}</p>
+        </div>
+
+        {/* Footer */}
+        <div className="p-6 pt-0 flex flex-col gap-2">
+          <button
+            onClick={onConfirm}
             disabled={isLoading}
+            className="w-full py-3 rounded-xl bg-red-600 text-white font-bold text-sm hover:bg-red-700 transition-all shadow-md shadow-red-600/10 active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2"
           >
-            {isLoading ? 'Deleting...' : 'Delete'}
+            {isLoading ? (
+              <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+            ) : (
+              <>
+                <Trash2 className="w-4 h-4" />
+                Confirm Delete
+              </>
+            )}
+          </button>
+          <button
+            onClick={onClose}
+            disabled={isLoading}
+            className="w-full py-3 rounded-xl bg-gray-50 text-gray-500 font-bold text-sm hover:bg-gray-100 transition-all active:scale-[0.98]"
+          >
+            Keep Record
           </button>
         </div>
       </div>

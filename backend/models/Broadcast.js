@@ -25,7 +25,7 @@ const recipientSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.Mixed,
     default: {}
   }
-}, { 
+}, {
   _id: false,
   strict: false
 });
@@ -66,6 +66,10 @@ const broadcastSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  lastRecipientNumber: {
+    type: String,
+    default: ''
+  },
   type: {
     type: String,
     enum: ['text', 'image', 'document'],
@@ -82,13 +86,13 @@ const broadcastSchema = new mongoose.Schema({
 });
 
 // Virtual untuk success rate
-broadcastSchema.virtual('successRate').get(function() {
+broadcastSchema.virtual('successRate').get(function () {
   if (this.totalRecipients === 0) return 0;
   return Math.round((this.successCount / this.totalRecipients) * 100);
 });
 
 // Virtual untuk sent count
-broadcastSchema.virtual('sentCount').get(function() {
+broadcastSchema.virtual('sentCount').get(function () {
   return this.successCount + this.failedCount;
 });
 
@@ -97,7 +101,7 @@ broadcastSchema.set('toJSON', { virtuals: true });
 broadcastSchema.set('toObject', { virtuals: true });
 
 // Pre-save: Set totalRecipients
-broadcastSchema.pre('save', function(next) {
+broadcastSchema.pre('save', function (next) {
   if (this.isModified('recipients')) {
     this.totalRecipients = this.recipients.length;
   }

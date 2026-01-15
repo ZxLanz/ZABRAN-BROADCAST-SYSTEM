@@ -1,4 +1,4 @@
-import { X, User, Phone, Mail, Tag, Calendar, MessageCircle, Edit, Trash2, Clock } from 'lucide-react';
+import { X, User, Phone, Mail, Tag, Calendar, MessageCircle, Edit, Trash2, Clock, CheckCircle2, AlertCircle, ShieldAlert } from 'lucide-react';
 
 export default function ViewCustomerModal({ isOpen, onClose, customer, onEdit, onDelete }) {
   const handleOverlayClick = (e) => {
@@ -19,233 +19,182 @@ export default function ViewCustomerModal({ isOpen, onClose, customer, onEdit, o
 
   if (!isOpen || !customer) return null;
 
-  const getGroupColor = (group) => {
-    const colors = {
-      'VIP': 'bg-purple-100 text-purple-800 border-purple-200',
-      'Premium': 'bg-blue-100 text-blue-800 border-blue-200',
-      'Regular': 'bg-gray-100 text-gray-800 border-gray-200'
-    };
-    return colors[group] || colors['Regular'];
+  const formatDate = (dateString) => {
+    if (!dateString) return 'Never';
+    const date = new Date(dateString);
+    if (isNaN(date.getTime())) return 'Never';
+    return date.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
   };
 
-  const getStatusColor = (status) => {
-    const colors = {
-      'active': 'bg-green-100 text-green-800 border-green-200',
-      'inactive': 'bg-red-100 text-red-800 border-red-200'
+  const getStatusConfig = (status) => {
+    const configs = {
+      active: {
+        bg: 'bg-green-500/10',
+        text: 'text-green-600',
+        border: 'border-green-500/20',
+        icon: CheckCircle2,
+        label: 'Active'
+      },
+      inactive: {
+        bg: 'bg-yellow-500/10',
+        text: 'text-yellow-600',
+        border: 'border-yellow-500/20',
+        icon: AlertCircle,
+        label: 'Inactive'
+      },
+      blocked: {
+        bg: 'bg-red-500/10',
+        text: 'text-red-600',
+        border: 'border-red-500/20',
+        icon: ShieldAlert,
+        label: 'Blocked'
+      }
     };
-    return colors[status] || colors['active'];
+    return configs[status] || configs.active;
   };
+
+  const statusConfig = getStatusConfig(customer.status);
+  const StatusIcon = statusConfig.icon;
 
   return (
-    <div 
-      className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in"
+    <div
+      className="fixed inset-0 bg-navy-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-300"
       onClick={handleOverlayClick}
     >
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden animate-scale-in">
-        
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in zoom-in-95 duration-300 border border-white/20">
+
         {/* Modal Header */}
-        <div className="bg-gradient-to-r from-primary-400 via-primary-500 to-primary-600 px-8 py-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="w-16 h-16 bg-white/20 rounded-2xl flex items-center justify-center">
-                <User className="w-8 h-8 text-navy-900" />
+        <div className="bg-navy-900 px-8 py-6 relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-64 h-64 bg-primary-500/10 rounded-full -mr-32 -mt-32 blur-3xl"></div>
+
+          <div className="flex items-center justify-between relative z-10">
+            <div className="flex items-center gap-5">
+              <div className="w-14 h-14 bg-white/10 backdrop-blur-md rounded-xl flex items-center justify-center shadow-inner border border-white/10 text-primary-400 font-bold text-xl">
+                {customer.name ? customer.name[0].toUpperCase() : <User />}
               </div>
               <div>
-                <h2 className="text-2xl font-black text-navy-900 mb-1">
-                  Customer Details
+                <h2 className="text-xl font-bold text-white leading-tight">
+                  Customer Profile
                 </h2>
-                <p className="text-sm text-navy-700 font-medium">
-                  ID: {customer.id}
-                </p>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest bg-white/5 px-2 py-0.5 rounded">ID</span>
+                  <span className="text-xs text-gray-400 font-medium font-mono">
+                    {customer._id ? customer._id.slice(-12) : 'N/A'}
+                  </span>
+                </div>
               </div>
             </div>
             <button
               onClick={onClose}
-              className="w-10 h-10 bg-white/20 hover:bg-white/30 rounded-xl flex items-center justify-center transition-colors"
+              className="w-10 h-10 bg-white/5 hover:bg-white/10 rounded-xl flex items-center justify-center transition-all text-gray-400 hover:text-white"
             >
-              <X className="w-6 h-6 text-navy-900" />
+              <X className="w-6 h-6" />
             </button>
           </div>
         </div>
 
-        {/* Modal Body */}
-        <div className="p-8 overflow-y-auto max-h-[calc(90vh-120px)]">
-          
-          {/* Customer Info Card */}
-          <div className="bg-gradient-to-br from-gray-50 to-gray-100 border-2 border-gray-200 rounded-2xl p-6 mb-6">
-            <div className="flex items-start justify-between mb-6">
-              <div>
-                <h3 className="text-2xl font-black text-navy-800 mb-2">
-                  {customer.name}
-                </h3>
-                <div className="flex gap-2">
-                  <span className={`badge ${getGroupColor(customer.group)}`}>
-                    {customer.group}
-                  </span>
-                  <span className={`badge ${getStatusColor(customer.status)}`}>
-                    {customer.status === 'active' ? 'Active' : 'Inactive'}
-                  </span>
+        {/* Modal Content */}
+        <div className="p-8">
+
+          {/* Profile Basic Info */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-8 pb-8 border-b border-gray-100">
+            <div className="space-y-3">
+              <h3 className="text-3xl font-bold text-navy-900 tracking-tight">
+                {customer.name}
+              </h3>
+              <div className="flex flex-wrap gap-2">
+                <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border font-bold text-[11px] uppercase tracking-wider ${statusConfig.bg} ${statusConfig.text} ${statusConfig.border}`}>
+                  <StatusIcon className="w-3.5 h-3.5" />
+                  {statusConfig.label}
                 </div>
-              </div>
-              
-              {/* Quick Actions */}
-              <div className="flex gap-2">
-                <button
-                  onClick={handleEdit}
-                  className="px-4 py-2 bg-blue-500 text-white rounded-xl font-semibold hover:bg-blue-600 transition-colors flex items-center gap-2"
-                >
-                  <Edit className="w-4 h-4" />
-                  <span>Edit</span>
-                </button>
-                <button
-                  onClick={handleDelete}
-                  className="px-4 py-2 bg-red-500 text-white rounded-xl font-semibold hover:bg-red-600 transition-colors flex items-center gap-2"
-                >
-                  <Trash2 className="w-4 h-4" />
-                  <span>Delete</span>
-                </button>
+
+                {customer.tags && customer.tags.map((tag, i) => (
+                  <div key={i} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-primary-200 bg-primary-50 text-primary-700 font-bold text-[11px] uppercase tracking-wider">
+                    <Tag className="w-3 h-3" />
+                    {tag}
+                  </div>
+                ))}
               </div>
             </div>
 
-            {/* Contact Info Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="bg-white border-2 border-gray-200 rounded-xl p-4">
-                <div className="flex items-center gap-3 mb-2">
-                  <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center">
-                    <Phone className="w-5 h-5 text-blue-600" />
-                  </div>
-                  <div>
-                    <p className="text-xs font-bold text-gray-500 uppercase">Phone Number</p>
-                    <p className="text-sm font-bold text-navy-800">{customer.phone}</p>
-                  </div>
-                </div>
-              </div>
+            <div className="flex gap-2">
+              <button
+                onClick={handleEdit}
+                className="btn-icon bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white w-12 h-12"
+                title="Edit"
+              >
+                <Edit className="w-5 h-5" />
+              </button>
+              <button
+                onClick={handleDelete}
+                className="btn-icon bg-red-50 text-red-600 hover:bg-red-600 hover:text-white w-12 h-12"
+                title="Delete"
+              >
+                <Trash2 className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
 
-              <div className="bg-white border-2 border-gray-200 rounded-xl p-4">
-                <div className="flex items-center gap-3 mb-2">
-                  <div className="w-10 h-10 bg-green-100 rounded-xl flex items-center justify-center">
-                    <Mail className="w-5 h-5 text-green-600" />
-                  </div>
-                  <div>
-                    <p className="text-xs font-bold text-gray-500 uppercase">Email Address</p>
-                    <p className="text-sm font-bold text-navy-800 break-all">{customer.email}</p>
-                  </div>
-                </div>
+          {/* Details Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+            <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 flex flex-col gap-3">
+              <div className="w-10 h-10 bg-blue-100/50 rounded-xl flex items-center justify-center text-blue-600">
+                <Phone className="w-5 h-5" />
               </div>
-
-              <div className="bg-white border-2 border-gray-200 rounded-xl p-4">
-                <div className="flex items-center gap-3 mb-2">
-                  <div className="w-10 h-10 bg-purple-100 rounded-xl flex items-center justify-center">
-                    <Calendar className="w-5 h-5 text-purple-600" />
-                  </div>
-                  <div>
-                    <p className="text-xs font-bold text-gray-500 uppercase">Added Date</p>
-                    <p className="text-sm font-bold text-navy-800">
-                      {new Date(customer.addedDate).toLocaleDateString('en-US', {
-                        year: 'numeric',
-                        month: 'long',
-                        day: 'numeric'
-                      })}
-                    </p>
-                  </div>
-                </div>
+              <div>
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">WhatsApp</p>
+                <p className="text-sm font-bold text-navy-900">+{customer.phone}</p>
               </div>
+            </div>
 
-              <div className="bg-white border-2 border-gray-200 rounded-xl p-4">
-                <div className="flex items-center gap-3 mb-2">
-                  <div className="w-10 h-10 bg-orange-100 rounded-xl flex items-center justify-center">
-                    <Clock className="w-5 h-5 text-orange-600" />
-                  </div>
-                  <div>
-                    <p className="text-xs font-bold text-gray-500 uppercase">Last Contact</p>
-                    <p className="text-sm font-bold text-navy-800">
-                      {new Date(customer.lastContact).toLocaleDateString('en-US', {
-                        year: 'numeric',
-                        month: 'long',
-                        day: 'numeric'
-                      })}
-                    </p>
-                  </div>
-                </div>
+            <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 flex flex-col gap-3">
+              <div className="w-10 h-10 bg-purple-100/50 rounded-xl flex items-center justify-center text-purple-600">
+                <Calendar className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Registered</p>
+                <p className="text-sm font-bold text-navy-900">{formatDate(customer.createdAt || customer.addedDate)}</p>
+              </div>
+            </div>
+
+            <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 flex flex-col gap-3">
+              <div className="w-10 h-10 bg-orange-100/50 rounded-xl flex items-center justify-center text-orange-600">
+                <Clock className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Last Contact</p>
+                <p className="text-sm font-bold text-navy-900">{formatDate(customer.lastContactDate || customer.lastContact)}</p>
               </div>
             </div>
           </div>
 
           {/* Notes Section */}
           {customer.notes && (
-            <div className="bg-amber-50 border-2 border-amber-200 rounded-2xl p-6 mb-6">
+            <div className="bg-amber-50 rounded-2xl p-6 border border-amber-100">
               <div className="flex items-center gap-2 mb-3">
-                <MessageCircle className="w-5 h-5 text-amber-600" />
-                <h4 className="text-lg font-black text-navy-800">Notes</h4>
+                <MessageCircle className="w-4 h-4 text-amber-600" />
+                <h4 className="text-sm font-bold text-amber-800 uppercase tracking-wide">Internal Notes</h4>
               </div>
-              <p className="text-sm font-medium text-gray-700 leading-relaxed">
-                {customer.notes}
+              <p className="text-sm font-medium text-amber-900/80 leading-relaxed italic">
+                "{customer.notes}"
               </p>
             </div>
           )}
-
-          {/* Activity History (Mock Data) */}
-          <div className="bg-white border-2 border-gray-200 rounded-2xl p-6">
-            <h4 className="text-lg font-black text-navy-800 mb-4">Recent Activity</h4>
-            <div className="space-y-3">
-              <div className="flex items-start gap-3 pb-3 border-b border-gray-200 last:border-0 last:pb-0">
-                <div className="w-2 h-2 bg-green-500 rounded-full mt-2"></div>
-                <div className="flex-1">
-                  <p className="text-sm font-bold text-navy-800">Customer added to system</p>
-                  <p className="text-xs text-gray-500 font-medium">
-                    {new Date(customer.addedDate).toLocaleDateString('en-US', {
-                      year: 'numeric',
-                      month: 'short',
-                      day: 'numeric'
-                    })}
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-start gap-3 pb-3 border-b border-gray-200 last:border-0 last:pb-0">
-                <div className="w-2 h-2 bg-blue-500 rounded-full mt-2"></div>
-                <div className="flex-1">
-                  <p className="text-sm font-bold text-navy-800">Last contact made</p>
-                  <p className="text-xs text-gray-500 font-medium">
-                    {new Date(customer.lastContact).toLocaleDateString('en-US', {
-                      year: 'numeric',
-                      month: 'short',
-                      day: 'numeric'
-                    })}
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-start gap-3">
-                <div className="w-2 h-2 bg-purple-500 rounded-full mt-2"></div>
-                <div className="flex-1">
-                  <p className="text-sm font-bold text-navy-800">
-                    Assigned to {customer.group} group
-                  </p>
-                  <p className="text-xs text-gray-500 font-medium">
-                    {new Date(customer.addedDate).toLocaleDateString('en-US', {
-                      year: 'numeric',
-                      month: 'short',
-                      day: 'numeric'
-                    })}
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-
         </div>
 
         {/* Modal Footer */}
-        <div className="bg-gray-50 border-t-2 border-gray-200 px-8 py-4">
-          <div className="flex justify-end">
-            <button
-              onClick={onClose}
-              className="px-6 py-3 bg-gray-200 text-gray-700 rounded-xl font-semibold hover:bg-gray-300 transition-colors"
-            >
-              Close
-            </button>
-          </div>
+        <div className="px-8 py-5 bg-gray-50 border-t border-gray-100 flex items-center justify-between">
+          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Managed by {customer.createdBy?.name || 'System'}</p>
+          <button
+            onClick={onClose}
+            className="px-6 py-2.5 bg-navy-900 text-white rounded-xl font-bold text-sm hover:bg-navy-800 transition-all active:scale-95 shadow-lg shadow-navy-900/10"
+          >
+            Close Profile
+          </button>
         </div>
 
       </div>

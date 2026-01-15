@@ -1,35 +1,43 @@
 // frontend/src/components/layout/MainLayout.jsx
-import { Outlet } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router-dom';
 import Header from './Header';
 import Sidebar from './Sidebar';
 import { Footer } from './Footer';
-import WhatsAppBanner from '../WhatsAppBanner'; // ✅ NEW IMPORT
+import WhatsAppBanner from '../WhatsAppBanner';
 
 export default function MainLayout() {
+  const location = useLocation();
+  const isLiveChat = location.pathname === '/chats';
+
   return (
     <div className="flex min-h-screen bg-gray-50">
-      
+
       {/* Sidebar - Fixed Position Overlay */}
       <Sidebar />
 
-      {/* Main Content Area - Full Width with Left Padding for Sidebar Space */}
+      {/* Main Content Area */}
       <div className="flex-1 flex flex-col w-full pl-20">
-        
+
         {/* Header - Full Width */}
         <Header />
 
-        {/* ✅ WhatsApp Warning Banner */}
-        <WhatsAppBanner />
+        {/* Banner (Hide on LiveChat to save space or keep it? User complained about it appearing repeatedly) */}
+        {!isLiveChat && <WhatsAppBanner />}
 
-        {/* Page Content - Scrollable */}
-        <main className="flex-1 overflow-y-auto">
-          <div className="max-w-[1536px] mx-auto px-8 py-8 w-full">
+        {/* Page Content */}
+        <main className={`flex-1 ${isLiveChat ? 'overflow-hidden' : 'overflow-y-auto'}`}>
+          {isLiveChat ? (
+            // No padding for LiveChat
             <Outlet />
-          </div>
+          ) : (
+            <div className="max-w-[1536px] mx-auto px-8 py-8 w-full">
+              <Outlet />
+            </div>
+          )}
         </main>
 
-        {/* Footer - Full Width */}
-        <Footer />
+        {/* Footer - Hide on LiveChat */}
+        {!isLiveChat && <Footer />}
 
       </div>
 

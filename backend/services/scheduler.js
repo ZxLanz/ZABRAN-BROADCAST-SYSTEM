@@ -5,7 +5,15 @@
 
 const cron = require('node-cron');
 const Broadcast = require('../models/Broadcast');
-const { sendBroadcastMessages } = require('../routes/broadcasts');
+const broadcastService = require('./broadcastService');
+const fs = require('fs');
+const path = require('path');
+
+const logDebug = (msg) => {
+  const logPath = path.join(__dirname, '../scheduler_debug.log');
+  fs.appendFileSync(logPath, `[${new Date().toISOString()}] ${msg}\n`);
+};
+
 
 let isSchedulerRunning = false;
 let cronJob = null;
@@ -30,8 +38,16 @@ const initScheduler = () => {
     try {
       const now = new Date();
       console.log(`\n🕐 [SCHEDULER] Checking at ${now.toISOString()}`);
-      
-      // ✅ FIX: Populate createdBy to get user info
+
+      // ✅ Populate createdBy to get user info
+      // ❗ IMPORTANT:
+      // Sebelumnya kita juga mengambil status "on-process" di sini.
+      // Itu membuat scheduler bisa mem‑start ulang broadcast yang SEDANG berjalan
+      // setiap 1 menit, sehingga satu campaign yang sama mengirim pesan berkali‑kali.
+      //
+      // Sekarang scheduler HANYA mengambil broadcast yang:
+      // - status: "scheduled"
+      // - dan waktu kirimnya (sendAt) sudah lewat / sama dengan sekarang.
       const scheduledBroadcasts = await Broadcast.find({
         status: 'scheduled',
         sendAt: { $lte: now }
@@ -44,11 +60,14 @@ const initScheduler = () => {
 
       console.log(`📬 [SCHEDULER] Found ${scheduledBroadcasts.length} scheduled broadcast(s) ready to send`);
 
+
       // Process each scheduled broadcast
       for (const broadcast of scheduledBroadcasts) {
         try {
           console.log(`\n🚀 [SCHEDULER] Starting broadcast: ${broadcast.name} (${broadcast._id})`);
-          console.log(`   Scheduled for: ${broadcast.sendAt.toISOString()}`);
+          if (broadcast.sendAt) {
+            console.log(`   Scheduled for: ${broadcast.sendAt.toISOString()}`);
+          }
           console.log(`   Current time: ${now.toISOString()}`);
           console.log(`   Recipients: ${broadcast.totalRecipients || broadcast.recipients?.length || 0}`);
 
@@ -73,16 +92,14 @@ const initScheduler = () => {
           broadcast.startedAt = new Date();
           await broadcast.save();
 
-          // ✅ FIX: Pass userId as second parameter
-          sendBroadcastMessages(broadcast, userId).catch(err => {
-            console.error(`❌ [SCHEDULER] Broadcast error (${broadcast._id}):`, err.message);
-          });
+          // ✅ FIX: Use broadcastService.startBroadcast
+          broadcastService.startBroadcast(broadcast, userId);
 
           console.log(`✅ [SCHEDULER] Broadcast started: ${broadcast.name}`);
 
         } catch (error) {
           console.error(`❌ [SCHEDULER] Failed to start broadcast ${broadcast._id}:`, error.message);
-          
+
           // Mark as failed
           try {
             broadcast.status = 'failed';
@@ -103,42 +120,47 @@ const initScheduler = () => {
 
   isSchedulerRunning = true;
   console.log('✅ [SCHEDULER] Initialized (checking every 1 minute)\n');
-  
+
   // ✅ Run initial check after 2 seconds
   setTimeout(async () => {
     console.log('🔄 [SCHEDULER] Running initial check...');
     try {
       const now = new Date();
+
+      // 🔍 DEBUG: List all broadcasts and statuses
+      const allB = await Broadcast.find();
+      logDebug(`Initial check... (Total: ${allB.length})`);
+      allB.forEach(b => logDebug(`   🔸 ID: ${b._id}, Status: "${b.status}", Name: "${b.name}"`));
+
+      // Hanya proses broadcast yang memang DIJADWALKAN dan sudah waktunya
       const scheduledBroadcasts = await Broadcast.find({
         status: 'scheduled',
         sendAt: { $lte: now }
       }).populate('createdBy');
 
       if (scheduledBroadcasts.length > 0) {
-        console.log(`📬 [SCHEDULER] Found ${scheduledBroadcasts.length} pending broadcast(s) on startup`);
-        
-        // ✅ ADDED: Process pending broadcasts immediately
+        logDebug(`Found ${scheduledBroadcasts.length} pending scheduled broadcast(s)`);
+
+        // ✅ Process scheduled broadcasts immediately saat startup
         for (const broadcast of scheduledBroadcasts) {
           try {
             let userId = broadcast.createdBy?._id || broadcast.createdBy;
-            
+
             if (!userId) {
               console.error(`❌ [SCHEDULER] No user ID for broadcast ${broadcast._id}`);
               continue;
             }
-            
+
             userId = userId.toString ? userId.toString() : String(userId);
-            
+
             console.log(`🚀 [SCHEDULER] Starting pending broadcast: ${broadcast.name}`);
-            
+
             broadcast.status = 'on-process';
             broadcast.startedAt = new Date();
             await broadcast.save();
-            
-            sendBroadcastMessages(broadcast, userId).catch(err => {
-              console.error(`❌ [SCHEDULER] Startup broadcast error:`, err.message);
-            });
-            
+
+            broadcastService.startBroadcast(broadcast, userId);
+
           } catch (error) {
             console.error(`❌ [SCHEDULER] Error processing broadcast ${broadcast._id}:`, error.message);
           }

@@ -17,7 +17,7 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
-package-lock.json
+# package-lock.json  # ❌ DIKOMENTARI - Biar bisa commit untuk reproducbility
 yarn.lock
 pnpm-lock.yaml
 
@@ -99,3 +99,10 @@ credentials/
 .vercel/
 .netlify/
 .firebase/
+
+# CUSTOM - ZABRAN SPECIFIC
+backend/wa_auth_data/
+frontend/dist/
+*.log
+.DS_Store
+

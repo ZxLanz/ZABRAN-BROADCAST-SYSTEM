@@ -128,18 +128,25 @@ Untuk melihat aktivitas sistem secara live:
 ZABRAN-BROADCAST-SYSTEM/
 ├── backend/               # Logika API Node.js
 │   ├── config/            # Konfigurasi DB & App
-│   ├── controllers/       # Logika Route
+│   ├── middleware/        # Middleware (Auth, Upload)
 │   ├── models/            # Skema Database (MongoDB)
 │   ├── routes/            # Jalur API (Endpoints)
-│   ├── services/          # Logika Bisnis (WhatsApp, AI)
-│   └── utils/             # Fungsi Bantuan
+│   ├── services/          # Logika Bisnis (WhatsApp, AI, Socket)
+│   ├── utils/             # Fungsi Bantuan
+│   ├── server.js          # Entry Point Server
+│   └── public/            # File Statis & Uploads
 ├── frontend/              # Dashboard Admin (React)
 │   ├── src/
-│   │   ├── components/    # Komponen UI
-│   │   ├── pages/         # Halaman Utama
-│   │   └── utils/         # Helper API
-├── nginx-bin/             # Web Server Portable
-└── scripts/               # Skrip Otomatisasi (.bat)
+│   │   ├── components/    # Komponen UI Reusable
+│   │   ├── contexts/      # State Management Global
+│   │   ├── pages/         # Halaman Utama (Dashboard, Broadcast, dll)
+│   │   ├── utils/         # Helper API & Socket
+│   │   ├── App.jsx        # Routing Utama
+│   │   └── main.jsx       # Entry Point React
+└── scripts/               # Skrip Otomatisasi (.bat/.ps1)
+    ├── mulai.bat          # Start System
+    ├── sare.bat           # Restart System
+    └── mon.bat            # Monitor Logs
 ```
 
 ---
@@ -151,4 +158,4 @@ Ini adalah sistem perusahaan (Private Enterprise). Distribusi tanpa izin dilaran
 ## 📄 Lisensi
 
 Software Proprietary.
-Hak Cipta © 2026 **Lord Zilan**. Dilindungi Undang-Undang.
+Hak Cipta © 2026 **Saint Zilan**. Dilindungi Undang-Undang.

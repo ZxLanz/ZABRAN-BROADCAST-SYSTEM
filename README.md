@@ -1,154 +1,154 @@
 # 📡 ZABRAN BROADCAST SYSTEM
-> **Enterprise-Grade WhatsApp Broadcast & CRM Solution**
+> **Sistem Broadcast & CRM WhatsApp Kelas Enterprise**
 
-![Zabran System](https://img.shields.io/badge/Status-Stable-green) ![Version](https://img.shields.io/badge/Version-2.0-blue) ![Technology](https://img.shields.io/badge/Tech-MERN%20Stack-61DAFB)
+![Status Sistem](https://img.shields.io/badge/Status-Stabil-green) ![Versi](https://img.shields.io/badge/Versi-2.0-blue) ![Teknologi](https://img.shields.io/badge/Teknologi-MERN%20Stack-61DAFB)
 
-Zabran Broadcast System is a powerful, self-hosted WhatsApp marketing and CRM tool designed for high-volume broadcasting, automated customer engagement, and real-time chat management. Built on the **Baileys** library, it offers a multi-session architecture (1 Account per User) without monthly subscription fees.
-
----
-
-## 🚀 Key Features
-
-### 📢 Advanced Broadcasting
-- **Bulk Messaging:** Send messages to thousands of customers with a single click.
-- **Smart Delays:** Intelligent random delays to prevent WhatsApp banning.
-- **Media Support:** Send Images, Videos, and Documents.
-- **Rate Limiting:** Protects your number by limiting messages per minute/hour.
-- **Dynamic Variables:** Personalize messages with `{name}`, `{email}`, etc.
-
-### 🤖 Automation & AI
-- **Auto-Reply:** Keyword-based auto-responses.
-- **AI Integration:** Integrated with AI models (OpenRouter/Groq) for smart replies.
-- **Schedule:** Plan broadcasts for future dates and times.
-
-### 👥 Customer Relationship Management (CRM)
-- **Contact Management:** Import/Export contacts via CSV.
-- **Tagging System:** Organize customers (Royal, Gold, Platinum).
-- **History:** View full chat and broadcast history per customer.
-
-### 🛡️ Security & Performance
-- **Multi-Tenant:** Supports multiple admin accounts (each with their own WhatsApp session).
-- **Rate Limiting API:** Built-in protection against DDoS and abuse.
-- **Auto-Reconnect:** robust logic to handle WhatsApp disconnections automatically.
+Zabran Broadcast System adalah alat pemasaran WhatsApp & CRM mandiri (self-hosted) yang dirancang untuk pengiriman pesan massal, keterlibatan pelanggan otomatis, dan manajemen chat real-time. Dibangun di atas library **Baileys**, sistem ini menawarkan arsitektur multi-sesi (1 Akun per Pengguna) tanpa biaya langganan bulanan.
 
 ---
 
-## 🛠️ Technology Stack
+## 🚀 Fitur Unggulan
 
-The system is built using modern web technologies:
+### 📢 Broadcast Canggih (Pesan Massal)
+- **Kirim Bulk:** Kirim pesan ke ribuan pelanggan hanya dengan satu klik.
+- **Jeda Pintar (Smart Delay):** Penundaan acak yang cerdas untuk mencegah banned WhatsApp.
+- **Support Media:** Kirim Gambar, Video, dan Dokumen.
+- **Rate Limiting:** Melindungi nomor Anda dengan membatasi jumlah pesan per menit/jam.
+- **Variabel Dinamis:** Personalisasi pesan dengan menyapa nama pelanggan `{name}`, dll.
 
-- **Frontend:**
-  - [React.js](https://reactjs.org/) (Vite)
-  - [Tailwind CSS](https://tailwindcss.com/) (Styling)
-  - [Socket.io Client](https://socket.io/) (Real-time updates)
+### 🤖 Otomatisasi & AI
+- **Auto-Reply:** Balasan otomatis berdasarkan kata kunci.
+- **Integrasi AI:** Terhubung dengan model AI (OpenRouter/Groq/Gemini) untuk balasan cerdas.
+- **Jadwal Kirim:** Rencanakan broadcast untuk tanggal dan waktu di masa depan.
 
-- **Backend:**
-  - [Node.js](https://nodejs.org/) (Runtime)
-  - [Express.js](https://expressjs.com/) (API Framework)
-  - [MongoDB](https://www.mongodb.com/) (Database)
-  - [Baileys](https://github.com/WhiskeySockets/Baileys) (WhatsApp Web API)
-  - [Socket.io](https://socket.io/) (WebSockets)
-  - [PM2](https://pm2.keymetrics.io/) (Process Manager)
+### 👥 Manajemen Pelanggan (CRM)
+- **Manajemen Kontak:** Import/Export kontak via Excel/CSV.
+- **Sistem Tagging:** Kelompokkan pelanggan (Royal, Gold, Platinum).
+- **Riwayat Lengkap:** Lihat seluruh riwayat chat dan broadcast per pelanggan.
 
----
-
-## ⚙️ Prerequisites
-
-Before installing, ensure you have:
-1.  **Node.js** (v18 or higher recommended)
-2.  **MongoDB** (Local or Atlas) installed and running.
-3.  **Git** installed.
+### 🛡️ Keamanan & Performa
+- **Multi-Tenant:** Mendukung banyak akun admin (masing-masing punya sesi WhatsApp sendiri).
+- **Rate Limit API:** Perlindungan bawaan anti-serangan (DDoS/Brute Force).
+- **Auto-Reconnect:** Logika cerdas untuk menyambungkan ulang WhatsApp secara otomatis jika terputus.
 
 ---
 
-## 📥 Installation
+## 🛠️ Teknologi yang Digunakan
 
-1.  **Clone the Repository**
+Sistem ini dibangun menggunakan teknologi web modern:
+
+- **Frontend (Tampilan):**
+  - [React.js](https://reactjs.org/) (Vite) - Cepat & Responsif.
+  - [Tailwind CSS](https://tailwindcss.com/) (Desain Modern).
+  - [Socket.io Client](https://socket.io/) (Update Real-time).
+
+- **Backend (Server):**
+  - [Node.js](https://nodejs.org/) (Mesin Utama).
+  - [Express.js](https://expressjs.com/) (Kerangka API).
+  - [MongoDB](https://www.mongodb.com/) (Database NoSQL).
+  - [Baileys](https://github.com/WhiskeySockets/Baileys) (Koneksi WhatsApp Web API).
+  - [Socket.io](https://socket.io/) (Komunikasi Real-time).
+  - [PM2](https://pm2.keymetrics.io/) (Manajemen Proses).
+
+---
+
+## ⚙️ Persyaratan Sistem
+
+Sebelum menginstall, pastikan Anda memiliki:
+1.  **Node.js** (Versi 18 ke atas direkomendasikan).
+2.  **MongoDB** (Lokal atau Atlas) sudah terinstall dan berjalan.
+3.  **Git** untuk mengunduh kode.
+
+---
+
+## 📥 Cara Install
+
+1.  **Clone Repository**
     ```bash
     git clone https://github.com/ZxLanz/ZABRAN-BROADCAST-SYSTEM.git
     cd ZABRAN-BROADCAST-SYSTEM
     ```
 
-2.  **Install Dependencies**
-    You need to install dependencies for both Backend and Frontend.
+2.  **Install Dependencies (Paket)**
+    Anda perlu menginstall paket untuk Backend dan Frontend.
     ```bash
-    # Backend
+    # Masuk folder backend & install
     cd backend
     npm install
 
-    # Frontend
+    # Masuk folder frontend & install
     cd ../frontend
     npm install
     ```
 
-3.  **Environment Setup**
-    Create a `.env` file in `backend/` and `frontend/` (based on `.env.example` if available).
+3.  **Konfigurasi Environment (.env)**
+    Buat file `.env` di dalam folder `backend/` dan `frontend/`.
     
-    **Backend `.env` example:**
+    **Contoh isi backend `.env`:**
     ```env
     PORT=5000
     MONGO_URI=mongodb://localhost:27017/zabran_broadcast
-    JWT_SECRET=your_super_secret_key
+    JWT_SECRET=kunci_rahasia_anda_disini
     FRONTEND_URL=http://localhost:5173
     ```
 
 ---
 
-## 🚦 Usage
+## 🚦 Cara Penggunaan
 
-We have provided specific scripts for Windows users for easy management.
+Kami menyediakan skrip khusus pengguna Windows agar lebih mudah.
 
-### Starting the System
-Run the `mulai.bat` script in the root directory.
+### Menyalakan Sistem
+Jalankan file `mulai.bat` di folder utama.
 ```bash
 .\mulai.bat
 ```
-This will:
-1. Start Nginx (Web Server)
-2. Start Backend & Frontend via PM2.
+Ini akan otomatis:
+1. Menyalakan Nginx (Web Server).
+2. Menyalakan Backend & Frontend via PM2.
 
-### Restarting / Resetting
-If you encounter issues, use the `sare.bat` (Saint Restart) script.
+### Restart / Reset Sistem
+Jika ada masalah, gunakan skrip `sare.bat` (Saint Restart).
 ```bash
 .\sare.bat
 ```
-This will restart all processes and clear cache.
+Ini akan mematikan semua proses lalu menyalakannya kembali dengan bersih.
 
-### Monitoring Logs
-To view live logs of the system:
+### Memantau Log (Monitor)
+Untuk melihat aktivitas sistem secara live:
 ```bash
 .\mon.bat
 ```
 
 ---
 
-## 📂 Project Structure
+## 📂 Struktur Project
 
 ```
 ZABRAN-BROADCAST-SYSTEM/
-├── backend/               # Node.js API & Logic
-│   ├── config/            # DB & App Config
-│   ├── controllers/       # Route Logic
-│   ├── models/            # Mongoose Schemas
-│   ├── routes/            # API Endpoints
-│   ├── services/          # Business Logic (WhatsApp, AI)
-│   └── utils/             # Helpers
-├── frontend/              # React Dashboard
+├── backend/               # Logika API Node.js
+│   ├── config/            # Konfigurasi DB & App
+│   ├── controllers/       # Logika Route
+│   ├── models/            # Skema Database (MongoDB)
+│   ├── routes/            # Jalur API (Endpoints)
+│   ├── services/          # Logika Bisnis (WhatsApp, AI)
+│   └── utils/             # Fungsi Bantuan
+├── frontend/              # Dashboard Admin (React)
 │   ├── src/
-│   │   ├── components/    # Reusable UI
-│   │   ├── pages/         # Main Views
-│   │   └── utils/         # API Helpers
-├── nginx-bin/             # Nginx Web Server (Portable)
-└── scripts/               # Automation Scripts (.bat)
+│   │   ├── components/    # Komponen UI
+│   │   ├── pages/         # Halaman Utama
+│   │   └── utils/         # Helper API
+├── nginx-bin/             # Web Server Portable
+└── scripts/               # Skrip Otomatisasi (.bat)
 ```
 
 ---
 
-## 🤝 Contributing
+## 🤝 Kontribusi
 
-This is a private enterprise system. Unauthorized distribution requires permission from **ZABRAN INTERNASIONAL GROUP**.
+Ini adalah sistem perusahaan (Private Enterprise). Distribusi tanpa izin dilarang keras tanpa persetujuan dari **ZABRAN INTERNASIONAL GROUP**.
 
-## 📄 License
+## 📄 Lisensi
 
-Proprietary Software.
-Copyright © 2026 **Lord Zilan**. All Rights Reserved.
+Software Proprietary.
+Hak Cipta © 2026 **Lord Zilan**. Dilindungi Undang-Undang.

@@ -36,7 +36,7 @@ export default function Reports() {
   const [error, setError] = useState(null);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  
+
   // Real data states
   const [stats, setStats] = useState({
     totalMessages: 0,
@@ -44,7 +44,7 @@ export default function Reports() {
     successRate: 0,
     avgResponseTime: "0m"
   });
-  
+
   const [messagesByDay, setMessagesByDay] = useState([]);
   const [dailySummary, setDailySummary] = useState(null);
   const [topTemplates, setTopTemplates] = useState([]);
@@ -72,45 +72,38 @@ export default function Reports() {
       };
       const days = daysMap[dateRange] || 7;
 
-      // Fetch data in parallel - NOW INCLUDING DAILY STATS! 🔥
-      const [dailyStatsRes, broadcastRes, customerRes, templateRes] = await Promise.all([
-        axios.get(`/broadcasts/stats/daily?days=${days}`),
-        axios.get('/broadcasts/stats'),
+      // Fetch data in parallel - NOW USING COMPREHENSIVE CHAT STATS! 🔥
+      const [chatStatsRes, customerRes, templateRes] = await Promise.all([
+        axios.get(`/chats/stats/daily?days=${days}`),
         axios.get('/customers/stats/summary'),
         axios.get('/templates')
       ]);
 
-      // 📊 Process REAL daily stats from API
-      const dailyStatsData = dailyStatsRes.data;
-      const broadcastData = broadcastRes.data.data;
+      // 📊 Process REAL daily stats from CHAT API
+      const chatStatsData = chatStatsRes.data;
       const customerData = customerRes.data.data;
       const templateData = templateRes.data.data;
 
-      console.log('📊 Daily Stats Data:', dailyStatsData);
+
 
       // Set summary stats
       setStats({
-        totalMessages: dailyStatsData.summary?.totalSent || broadcastData.total || 0,
+        totalMessages: chatStatsData.summary.totalSent || 0,
         totalCustomers: customerData.total || 0,
-        successRate: parseFloat(dailyStatsData.summary?.overallDeliveryRate || broadcastData.successRate || 0),
-        avgResponseTime: "2.3m"
+        successRate: parseFloat(chatStatsData.summary.deliveryRate || 0),
+        avgResponseTime: "0" // Placeholder, requires complex calc
       });
 
       // 🔥 Set REAL daily chart data from API
-      if (dailyStatsData.stats && dailyStatsData.stats.length > 0) {
-        const chartData = dailyStatsData.stats.map(stat => {
-          // Convert to WIB timezone (GMT+7)
-          const utcDate = new Date(stat.date + 'T00:00:00Z');
-          const wibDate = new Date(utcDate.getTime() + (7 * 60 * 60 * 1000));
-          
-          // Format day name in WIB
-          const dayName = wibDate.toLocaleDateString('en-US', { 
-            weekday: 'short',
-            timeZone: 'Asia/Jakarta'
-          });
-          
+      if (chatStatsData.stats && chatStatsData.stats.length > 0) {
+        const chartData = chatStatsData.stats.map(stat => {
+          // Explicitly parse YYYY-MM-DD to avoid timezone shift
+          const [year, month, day] = stat.date.split('-').map(Number);
+          const dateObj = new Date(year, month - 1, day);
+
           return {
-            day: dayName,
+            day: dateObj.toLocaleDateString('id-ID', { day: '2-digit', month: 'short' }), // "26 Jan"
+            fullDate: dateObj.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
             date: stat.date,
             sent: stat.sent,
             delivered: stat.delivered,
@@ -118,9 +111,8 @@ export default function Reports() {
           };
         });
         setMessagesByDay(chartData);
-        setDailySummary(dailyStatsData.summary);
+        setDailySummary(chatStatsData.summary);
       } else {
-        // Empty state
         setMessagesByDay([]);
         setDailySummary(null);
       }
@@ -132,10 +124,10 @@ export default function Reports() {
         .map(t => ({
           name: t.name,
           sent: t.usageCount || 0,
-          rate: 95 + Math.random() * 5,
-          trend: (t.usageCount || 0) > 100 ? "up" : "down"
+          rate: 90 + Math.random() * 10, // Mock success rate for templates for now
+          trend: (t.usageCount || 0) > 10 ? "up" : "down"
         }));
-      
+
       setTopTemplates(sortedTemplates);
 
       // Generate category distribution from templates
@@ -185,12 +177,12 @@ export default function Reports() {
   const handleExportCSV = () => {
     try {
       let csv = '';
-      
+
       // Header
       csv += '=== ZABRAN BROADCAST SYSTEM - REPORT ===\n';
       csv += `Generated: ${new Date().toLocaleString()}\n`;
       csv += `Period: ${dateRange}\n\n`;
-      
+
       // Stats Summary
       csv += '=== SUMMARY STATISTICS ===\n';
       csv += 'Metric,Value\n';
@@ -198,16 +190,16 @@ export default function Reports() {
       csv += `Total Customers,${stats.totalCustomers}\n`;
       csv += `Success Rate,${stats.successRate}%\n`;
       csv += `Average Response Time,${stats.avgResponseTime}\n\n`;
-      
+
       // Daily Messages
       csv += '=== MESSAGES BY DAY ===\n';
-      csv += 'Day,Date,Sent,Delivered,Failed,Success Rate\n';
+      csv += 'Date,Sent,Delivered,Failed,Success Rate\n';
       messagesByDay.forEach(d => {
         const successRate = d.sent > 0 ? ((d.delivered / d.sent) * 100).toFixed(1) : 0;
-        csv += `${d.day},${d.date},${d.sent},${d.delivered},${d.failed},${successRate}%\n`;
+        csv += `${d.date},${d.sent},${d.delivered},${d.failed},${successRate}%\n`;
       });
       csv += '\n';
-      
+
       // Top Templates
       csv += '=== TOP TEMPLATES ===\n';
       csv += 'Rank,Template Name,Messages Sent,Success Rate,Trend\n';
@@ -215,14 +207,14 @@ export default function Reports() {
         csv += `${i + 1},${t.name},${t.sent},${t.rate.toFixed(1)}%,${t.trend}\n`;
       });
       csv += '\n';
-      
+
       // Category Distribution
       csv += '=== MESSAGES BY CATEGORY ===\n';
       csv += 'Category,Percentage,Message Count\n';
       messagesByCategory.forEach(c => {
         csv += `${c.name},${c.value}%,${c.count}\n`;
       });
-      
+
       // Download CSV
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
@@ -233,7 +225,7 @@ export default function Reports() {
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
-      
+
       setShowExportMenu(false);
       toast.success('CSV report exported successfully');
     } catch (err) {
@@ -260,7 +252,7 @@ export default function Reports() {
         topTemplates: topTemplates,
         categoryDistribution: messagesByCategory
       };
-      
+
       const dataStr = JSON.stringify(exportData, null, 2);
       const dataBlob = new Blob([dataStr], { type: 'application/json' });
       const url = URL.createObjectURL(dataBlob);
@@ -271,7 +263,7 @@ export default function Reports() {
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
-      
+
       setShowExportMenu(false);
       toast.success('JSON report exported successfully');
     } catch (err) {
@@ -291,7 +283,7 @@ export default function Reports() {
       label: "Total Messages",
       value: stats.totalMessages.toLocaleString(),
       icon: MessageSquare,
-      trend: dailySummary ? `${dailySummary.totalBroadcasts} broadcasts` : "No data",
+      trend: dailySummary ? "All Types" : "No data",
       trendUp: true,
       adminOnly: false,
     },
@@ -329,39 +321,24 @@ export default function Reports() {
     return wibDate;
   };
 
-  const formatDateWIB = (dateStr) => {
-    const wibDate = formatToWIB(dateStr);
-    return wibDate.toLocaleDateString('en-US', { 
-      weekday: 'short',
-      month: 'short', 
-      day: 'numeric',
-      timeZone: 'Asia/Jakarta'
-    });
-  };
-
   // Custom Tooltip for Recharts
   const CustomTooltip = ({ active, payload }) => {
     if (active && payload && payload.length) {
-      const wibDate = formatToWIB(payload[0].payload.date);
-      const formattedDate = wibDate.toLocaleDateString('en-US', { 
-        weekday: 'short',
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-        timeZone: 'Asia/Jakarta'
-      });
-      
+      const data = payload[0].payload;
+
       return (
         <div className="bg-navy-800 text-white px-4 py-3 rounded-lg shadow-xl text-xs font-semibold">
-          <p className="font-bold mb-2">{payload[0].payload.day}</p>
-          <p className="text-xs text-gray-300 mb-2">{formattedDate}</p>
+          <p className="font-bold mb-2 text-lg border-b border-gray-600 pb-1">{data.fullDate}</p>
           {payload.map((entry, index) => (
-            <div key={index} className="flex items-center gap-2 mb-1">
-              <div 
-                className="w-2 h-2 rounded-full" 
-                style={{ backgroundColor: entry.color }}
-              />
-              <span>{entry.name}: {entry.value}</span>
+            <div key={index} className="flex items-center justify-between gap-4 mb-1">
+              <div className="flex items-center gap-2">
+                <div
+                  className="w-3 h-3 rounded-full"
+                  style={{ backgroundColor: entry.color }}
+                />
+                <span className="capitalize">{entry.name}</span>
+              </div>
+              <span className="font-bold">{entry.value}</span>
             </div>
           ))}
         </div>
@@ -424,7 +401,7 @@ export default function Reports() {
               <option value="custom">Custom</option>
             </select>
 
-            <button 
+            <button
               onClick={handleRefresh}
               disabled={refreshing}
               className="btn-icon bg-white border-2 border-gray-300 hover:border-primary-500 transition"
@@ -435,7 +412,7 @@ export default function Reports() {
 
             {/* Export Dropdown */}
             <div className="relative">
-              <button 
+              <button
                 onClick={() => setShowExportMenu(!showExportMenu)}
                 className="btn btn-primary"
               >
@@ -468,8 +445,8 @@ export default function Reports() {
 
       {/* Click outside to close dropdown */}
       {showExportMenu && (
-        <div 
-          className="fixed inset-0 z-40" 
+        <div
+          className="fixed inset-0 z-40"
           onClick={() => setShowExportMenu(false)}
         ></div>
       )}
@@ -499,9 +476,8 @@ export default function Reports() {
                     {stat.value}
                   </div>
 
-                  <div className={`flex items-center gap-1.5 text-sm font-bold ${
-                    stat.trendUp ? "text-green-600" : "text-gray-600"
-                  }`}>
+                  <div className={`flex items-center gap-1.5 text-sm font-bold ${stat.trendUp ? "text-green-600" : "text-gray-600"
+                    }`}>
                     {stat.trendUp ? (
                       <TrendingUp className="w-4 h-4" />
                     ) : (
@@ -535,42 +511,43 @@ export default function Reports() {
             <ResponsiveContainer width="100%" height={280}>
               <LineChart data={messagesByDay}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                <XAxis 
-                  dataKey="day" 
-                  tick={{ fill: '#6b7280', fontSize: 12, fontWeight: 600 }}
+                <XAxis
+                  dataKey="day"
+                  tick={{ fill: '#6b7280', fontSize: 13, fontWeight: 600 }}
+                  dy={10}
                 />
-                <YAxis 
-                  tick={{ fill: '#6b7280', fontSize: 12, fontWeight: 600 }}
+                <YAxis
+                  tick={{ fill: '#6b7280', fontSize: 13, fontWeight: 600 }}
                 />
                 <Tooltip content={<CustomTooltip />} />
-                <Legend 
-                  wrapperStyle={{ fontSize: '12px', fontWeight: 600 }}
+                <Legend
+                  wrapperStyle={{ paddingTop: '20px', fontSize: '12px', fontWeight: 600 }}
                   iconType="circle"
                 />
-                <Line 
-                  type="monotone" 
-                  dataKey="sent" 
-                  stroke="#3b82f6" 
+                <Line
+                  type="monotone"
+                  dataKey="sent"
+                  stroke="#3b82f6"
                   strokeWidth={3}
                   dot={{ fill: '#3b82f6', r: 5 }}
                   activeDot={{ r: 7 }}
                   name="Sent"
                   animationDuration={800}
                 />
-                <Line 
-                  type="monotone" 
-                  dataKey="delivered" 
-                  stroke="#10b981" 
+                <Line
+                  type="monotone"
+                  dataKey="delivered"
+                  stroke="#10b981"
                   strokeWidth={3}
                   dot={{ fill: '#10b981', r: 5 }}
                   activeDot={{ r: 7 }}
                   name="Delivered"
                   animationDuration={800}
                 />
-                <Line 
-                  type="monotone" 
-                  dataKey="failed" 
-                  stroke="#ef4444" 
+                <Line
+                  type="monotone"
+                  dataKey="failed"
+                  stroke="#ef4444"
                   strokeWidth={3}
                   dot={{ fill: '#ef4444', r: 5 }}
                   activeDot={{ r: 7 }}

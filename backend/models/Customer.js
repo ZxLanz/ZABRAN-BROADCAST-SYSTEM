@@ -14,13 +14,16 @@ const customerSchema = new mongoose.Schema({
     unique: true, // Nomor telepon harus unik
     trim: true
   },
+  jids: [{ // Daftar JID yang terkait dengan customer ini (termasuk @lid)
+    type: String
+  }],
   email: {
     type: String,
     trim: true,
     lowercase: true,
     unique: false
   },
-  
+
   // Informasi Tambahan
   company: {
     type: String,
@@ -34,7 +37,7 @@ const customerSchema = new mongoose.Schema({
     type: String,
     trim: true
   },
-  
+
   // Tagging dan Status
   tags: [{ // Array of tags
     type: String,
@@ -49,7 +52,7 @@ const customerSchema = new mongoose.Schema({
     enum: ['active', 'inactive', 'blocked'], // Status yang valid
     default: 'active'
   },
-  
+
   // Custom Fields (untuk data pelanggan yang spesifik)
   customFields: {
     type: Map, // Menggunakan Map untuk menyimpan pasangan key-value dinamis
@@ -67,7 +70,7 @@ const customerSchema = new mongoose.Schema({
     ref: 'User',
     required: true // ✅ WAJIB - Every customer must have an owner
   }
-  
+
 }, {
   timestamps: true // Menambahkan createdAt dan updatedAt
 });

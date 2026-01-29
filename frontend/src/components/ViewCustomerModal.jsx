@@ -65,7 +65,7 @@ export default function ViewCustomerModal({ isOpen, onClose, customer, onEdit, o
       className="fixed inset-0 bg-navy-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-300"
       onClick={handleOverlayClick}
     >
-      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in zoom-in-95 duration-300 border border-white/20">
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in zoom-in-95 duration-300 border border-white/20 max-h-[90vh] flex flex-col">
 
         {/* Modal Header */}
         <div className="bg-navy-900 px-8 py-6 relative overflow-hidden">
@@ -98,7 +98,7 @@ export default function ViewCustomerModal({ isOpen, onClose, customer, onEdit, o
         </div>
 
         {/* Modal Content */}
-        <div className="p-8">
+        <div className="p-8 overflow-y-auto custom-scrollbar flex-1">
 
           {/* Profile Basic Info */}
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-8 pb-8 border-b border-gray-100">
@@ -112,12 +112,22 @@ export default function ViewCustomerModal({ isOpen, onClose, customer, onEdit, o
                   {statusConfig.label}
                 </div>
 
-                {customer.tags && customer.tags.map((tag, i) => (
-                  <div key={i} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-primary-200 bg-primary-50 text-primary-700 font-bold text-[11px] uppercase tracking-wider">
-                    <Tag className="w-3 h-3" />
-                    {tag}
-                  </div>
-                ))}
+                {customer.tags && customer.tags.map((tag, i) => {
+                  const lowerTag = tag.toLowerCase();
+                  let tagStyle = "bg-primary-50 text-primary-700 border-primary-200"; // Default
+
+                  if (lowerTag === 'royal') tagStyle = "bg-purple-100 text-purple-700 border-purple-200";
+                  if (lowerTag === 'gold') tagStyle = "bg-amber-100 text-amber-700 border-amber-200";
+                  if (lowerTag === 'platinum') tagStyle = "bg-slate-100 text-slate-700 border-slate-200";
+                  if (lowerTag === 'vip') tagStyle = "bg-rose-100 text-rose-700 border-rose-200";
+
+                  return (
+                    <div key={i} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border font-bold text-[11px] uppercase tracking-wider ${tagStyle}`}>
+                      <Tag className="w-3 h-3" />
+                      {tag}
+                    </div>
+                  );
+                })}
               </div>
             </div>
 

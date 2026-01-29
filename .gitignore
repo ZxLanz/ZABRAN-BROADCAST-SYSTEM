@@ -101,7 +101,13 @@ credentials/
 .firebase/
 
 # CUSTOM - ZABRAN SPECIFIC
+# CUSTOM - ZABRAN SPECIFIC
 backend/wa_auth_data/
+backend/baileys_auth_info/
+baileys_store_multi.json
+*.mp4
+*.zip
+nginx-bin/
 frontend/dist/
 *.log
 .DS_Store

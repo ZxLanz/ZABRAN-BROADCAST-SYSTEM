@@ -31,10 +31,13 @@ router.post('/generate',
       .isLength({ min: 5, max: 1000 }).withMessage('Prompt must be between 5-1000 characters'),
     body('tone')
       .optional()
-      .isIn(['formal', 'casual', 'urgent']).withMessage('Tone must be: formal, casual, or urgent'),
+      .isIn(['formal', 'casual', 'urgent', 'professional', 'friendly', 'enthusiastic']).withMessage('Tone must be: formal, casual, urgent, professional, friendly, or enthusiastic'),
     body('length')
       .optional()
-      .isIn(['short', 'medium', 'long']).withMessage('Length must be: short, medium, or long')
+      .isIn(['short', 'medium', 'long']).withMessage('Length must be: short, medium, or long'),
+    body('model')
+      .optional()
+      .isIn(['xiaomi/mimo-v2-flash:free']).withMessage('Model not supported')
   ],
   async (req, res) => {
     try {
@@ -48,15 +51,16 @@ router.post('/generate',
         });
       }
 
-      const { prompt, tone, length } = req.body;
+      const { prompt, tone, length, model } = req.body;
 
-      console.log('📥 [API] Generate request received:', { prompt, tone, length });
+      console.log('📥 [API] Generate request received:', { prompt, tone, length, model });
 
       // Generate message
       const result = await aiService.generateMessage({
         prompt,
         tone: tone || 'casual',
-        length: length || 'medium'
+        length: length || 'medium',
+        model: model || 'gemini-2.5-flash'
       });
 
       console.log('✅ [API] Message generated successfully');
@@ -66,7 +70,7 @@ router.post('/generate',
 
     } catch (error) {
       console.error('❌ [API] Generate error:', error.message);
-      
+
       res.status(500).json({
         success: false,
         error: error.message || 'Failed to generate message',
@@ -91,21 +95,21 @@ router.post('/generate',
 router.get('/test', async (req, res) => {
   try {
     console.log('🧪 [API] Testing AI service connection...');
-    
+
     const result = await aiService.testConnection();
-    
+
     const statusCode = result.success ? 200 : 503;
-    
-    console.log(result.success ? 
-      '✅ [API] AI service test passed' : 
+
+    console.log(result.success ?
+      '✅ [API] AI service test passed' :
       '❌ [API] AI service test failed'
     );
-    
+
     res.status(statusCode).json(result);
 
   } catch (error) {
     console.error('❌ [API] Test error:', error.message);
-    
+
     res.status(503).json({
       success: false,
       status: 'error',
@@ -135,9 +139,9 @@ router.get('/test', async (req, res) => {
 router.get('/status', (req, res) => {
   try {
     console.log('📊 [API] Getting AI service status...');
-    
+
     const info = aiService.getServiceInfo();
-    
+
     res.json({
       success: true,
       ...info,
@@ -146,7 +150,7 @@ router.get('/status', (req, res) => {
 
   } catch (error) {
     console.error('❌ [API] Status error:', error.message);
-    
+
     res.status(500).json({
       success: false,
       error: error.message || 'Failed to get AI service status'
@@ -221,7 +225,7 @@ router.post('/batch',
 
     } catch (error) {
       console.error('❌ [API] Batch error:', error.message);
-      
+
       res.status(500).json({
         success: false,
         error: error.message || 'Failed to generate batch messages'

@@ -8,7 +8,7 @@ const settingSchema = new mongoose.Schema({
     required: true,
     unique: true // One setting document per user
   },
-  
+
   // General Settings
   autoReply: {
     type: Boolean,
@@ -18,29 +18,34 @@ const settingSchema = new mongoose.Schema({
     type: String,
     default: 'Terima kasih telah menghubungi kami. Kami akan segera membalas pesan Anda.'
   },
-  
+
   readReceipts: {
     type: Boolean,
     default: true
   },
-  
+
+  autoRead: {
+    type: Boolean,
+    default: false
+  },
+
   notifications: {
     type: Boolean,
     default: true
   },
-  
+
   theme: {
     type: String,
     enum: ['light', 'dark', 'auto'],
     default: 'light'
   },
-  
+
   language: {
     type: String,
     enum: ['id', 'en'],
     default: 'id'
   },
-  
+
   // Business Hours
   businessHoursEnabled: {
     type: Boolean,
@@ -83,7 +88,7 @@ const settingSchema = new mongoose.Schema({
       close: { type: String, default: '17:00' }
     }
   },
-  
+
   // WhatsApp Settings (reference to existing whatsapp status)
   whatsappConnected: {
     type: Boolean,
@@ -93,7 +98,7 @@ const settingSchema = new mongoose.Schema({
     type: String,
     default: ''
   }
-  
+
 }, {
   timestamps: true
 });

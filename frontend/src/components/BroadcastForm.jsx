@@ -23,6 +23,14 @@ export default function BroadcastForm({ onCreated }) {
   const [csvPreview, setCsvPreview] = useState(null);
   const [templates, setTemplates] = useState([]);
 
+  // New State for Customer Selection
+  const [recipientMethod, setRecipientMethod] = useState('upload'); // 'upload' or 'existing'
+  const [customers, setCustomers] = useState([]);
+  const [selectedCustomerIds, setSelectedCustomerIds] = useState([]);
+  const [customerSearch, setCustomerSearch] = useState('');
+  const [isLoadingCustomers, setIsLoadingCustomers] = useState(false);
+
+  // Fetch Templates
   useEffect(() => {
     const fetchTemplates = async () => {
       try {
@@ -42,6 +50,55 @@ export default function BroadcastForm({ onCreated }) {
       fetchTemplates();
     }
   }, [isOpen]);
+
+  // Fetch Customers when required
+  useEffect(() => {
+    if (isOpen && recipientMethod === 'existing' && customers.length === 0) {
+      const fetchCustomers = async () => {
+        setIsLoadingCustomers(true);
+        try {
+          const { data } = await axios.get('/customers?limit=1000');
+          if (data.success) {
+            setCustomers(data.data || []);
+          }
+        } catch (error) {
+          console.error('Failed to fetch customers:', error);
+          toast.error('Gagal memuat daftar kontak');
+        } finally {
+          setIsLoadingCustomers(false);
+        }
+      };
+      fetchCustomers();
+    }
+  }, [isOpen, recipientMethod]);
+
+  const toggleSelectCustomer = (id) => {
+    setSelectedCustomerIds(prev =>
+      prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id]
+    );
+  };
+
+  const filteredCustomers = customers.filter(c =>
+    c.name.toLowerCase().includes(customerSearch.toLowerCase()) ||
+    c.phone.includes(customerSearch)
+  );
+
+  const handleSelectAllCustomers = () => {
+    const visibleIds = filteredCustomers.map(c => c._id);
+    const allSelected = visibleIds.every(id => selectedCustomerIds.includes(id));
+
+    if (allSelected) {
+      // Deselect all visible
+      setSelectedCustomerIds(prev => prev.filter(id => !visibleIds.includes(id)));
+    } else {
+      // Select all visible
+      const newSelected = [...selectedCustomerIds];
+      visibleIds.forEach(id => {
+        if (!newSelected.includes(id)) newSelected.push(id);
+      });
+      setSelectedCustomerIds(newSelected);
+    }
+  };
 
   const handleCsvUpload = async (e) => {
     const file = e.target.files[0];
@@ -112,6 +169,9 @@ export default function BroadcastForm({ onCreated }) {
   };
 
   const getRecipientsCount = () => {
+    if (recipientMethod === 'existing') {
+      return selectedCustomerIds.length;
+    }
     try {
       const list = JSON.parse(formData.recipients);
       return Array.isArray(list) ? list.length : 0;
@@ -149,10 +209,23 @@ export default function BroadcastForm({ onCreated }) {
     try {
       setLoading(true);
       let recipientsList;
-      try {
-        recipientsList = JSON.parse(formData.recipients);
-      } catch {
-        recipientsList = formData.recipients.split(',').map(r => ({ phone: r.trim().replace(/\D/g, '') })).filter(r => r.phone);
+
+      if (recipientMethod === 'existing') {
+        if (selectedCustomerIds.length === 0) {
+          toast.error('Pilih minimal satu penerima');
+          setLoading(false);
+          return;
+        }
+        // Map IDs back to objects
+        recipientsList = customers
+          .filter(c => selectedCustomerIds.includes(c._id))
+          .map(c => ({ name: c.name, phone: c.phone }));
+      } else {
+        try {
+          recipientsList = JSON.parse(formData.recipients);
+        } catch {
+          recipientsList = formData.recipients.split(',').map(r => ({ phone: r.trim().replace(/\D/g, '') })).filter(r => r.phone);
+        }
       }
 
       const payload = {
@@ -182,6 +255,8 @@ export default function BroadcastForm({ onCreated }) {
     setSendNow(true);
     setCsvFile(null);
     setCsvPreview(null);
+    setRecipientMethod('upload');
+    setSelectedCustomerIds([]);
   };
 
   const selectedTemplate = templates.find(t => t._id === formData.templateId);
@@ -316,42 +391,116 @@ export default function BroadcastForm({ onCreated }) {
                     <div className="flex items-center justify-between mb-1">
                       <label className="block text-[15px] font-bold text-navy-900">Daftar Penerima</label>
                       <p className="text-xs font-bold text-primary-600 bg-primary-50 px-3 py-1 rounded-full">
-                        {getRecipientsCount()} Penerima
+                        {getRecipientsCount()} Penerima Dipilih
                       </p>
                     </div>
 
-                    <div className="grid grid-cols-1 gap-4">
-                      <label className="group flex flex-col items-center justify-center gap-2 p-8 border-2 border-dashed border-gray-200 rounded-3xl hover:border-primary-400 hover:bg-primary-50/30 transition-all cursor-pointer">
-                        <div className="w-12 h-12 rounded-2xl bg-gray-50 flex items-center justify-center group-hover:bg-primary-100 transition-colors">
-                          <Upload className="w-6 h-6 text-gray-400 group-hover:text-primary-500" />
-                        </div>
-                        <div className="text-center">
-                          <p className="text-sm font-bold text-navy-900">Upload CSV</p>
-                          <p className="text-xs text-gray-400">Pilih file atau drop disini</p>
-                        </div>
-                        <input type="file" accept=".csv" onChange={handleCsvUpload} className="hidden" />
-                      </label>
-
-                      <textarea
-                        value={formData.recipients}
-                        onChange={(e) => setFormData(prev => ({ ...prev, recipients: e.target.value }))}
-                        placeholder='Atau paste manual: 6281xxx, 6282xxx...'
-                        className="w-full px-5 py-4 bg-gray-50 border-2 border-gray-100 rounded-2xl focus:border-primary-500 focus:outline-none transition-all font-mono text-xs h-32 custom-scrollbar"
-                      />
+                    {/* TABS FOR METHOD SELECTION */}
+                    <div className="flex bg-gray-100 p-1 rounded-xl mb-4">
+                      <button
+                        onClick={() => setRecipientMethod('upload')}
+                        className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${recipientMethod === 'upload' ? 'bg-white text-navy-900 shadow-sm' : 'text-gray-500 hover:text-navy-700'}`}
+                      >
+                        Upload CSV / Manual
+                      </button>
+                      <button
+                        onClick={() => setRecipientMethod('existing')}
+                        className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${recipientMethod === 'existing' ? 'bg-white text-navy-900 shadow-sm' : 'text-gray-500 hover:text-navy-700'}`}
+                      >
+                        Pilih Kontak Tersimpan
+                      </button>
                     </div>
 
-                    {csvPreview && (
-                      <div className="p-4 bg-green-50 rounded-2xl border border-green-100 animate-in slide-in-from-top-2">
-                        <div className="flex items-center gap-2 mb-2">
-                          <Check className="w-4 h-4 text-green-600" />
-                          <p className="text-xs font-bold text-green-700">{csvPreview.total} kontak berhasil dimuat</p>
+                    {recipientMethod === 'upload' ? (
+                      <div className="grid grid-cols-1 gap-4 animate-in fade-in duration-300">
+                        <label className="group flex flex-col items-center justify-center gap-2 p-8 border-2 border-dashed border-gray-200 rounded-3xl hover:border-primary-400 hover:bg-primary-50/30 transition-all cursor-pointer">
+                          <div className="w-12 h-12 rounded-2xl bg-gray-50 flex items-center justify-center group-hover:bg-primary-100 transition-colors">
+                            <Upload className="w-6 h-6 text-gray-400 group-hover:text-primary-500" />
+                          </div>
+                          <div className="text-center">
+                            <p className="text-sm font-bold text-navy-900">Upload CSV</p>
+                            <p className="text-xs text-gray-400">Pilih file atau drop disini</p>
+                          </div>
+                          <input type="file" accept=".csv" onChange={handleCsvUpload} className="hidden" />
+                        </label>
+
+                        <textarea
+                          value={formData.recipients}
+                          onChange={(e) => setFormData(prev => ({ ...prev, recipients: e.target.value }))}
+                          placeholder='Atau paste manual: 6281xxx, 6282xxx...'
+                          className="w-full px-5 py-4 bg-gray-50 border-2 border-gray-100 rounded-2xl focus:border-primary-500 focus:outline-none transition-all font-mono text-xs h-32 custom-scrollbar"
+                        />
+
+                        {csvPreview && (
+                          <div className="p-4 bg-green-50 rounded-2xl border border-green-100 animate-in slide-in-from-top-2">
+                            <div className="flex items-center gap-2 mb-2">
+                              <Check className="w-4 h-4 text-green-600" />
+                              <p className="text-xs font-bold text-green-700">{csvPreview.total} kontak berhasil dimuat</p>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              {csvPreview.sample.map((s, i) => (
+                                <span key={i} className="px-2 py-1 bg-white text-[10px] text-green-600 rounded-lg border border-green-200 font-medium">
+                                  {s.name || 'User'} ({s.phone.slice(-4)})
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="flex flex-col h-[320px] bg-white border-2 border-gray-100 rounded-2xl overflow-hidden animate-in fade-in duration-300">
+                        {/* Search Bar */}
+                        <div className="p-3 border-b border-gray-100 flex gap-2">
+                          <input
+                            type="text"
+                            placeholder="Cari nama atau nomor..."
+                            className="flex-1 px-3 py-2 bg-gray-50 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-100"
+                            value={customerSearch}
+                            onChange={(e) => setCustomerSearch(e.target.value)}
+                          />
+                          <button onClick={handleSelectAllCustomers} className="px-3 py-2 bg-gray-100 rounded-xl text-xs font-bold text-gray-600 hover:bg-gray-200">
+                            {selectedCustomerIds.length === filteredCustomers.length && filteredCustomers.length > 0 ? 'Deselect All' : 'Select All'}
+                          </button>
                         </div>
-                        <div className="flex flex-wrap gap-2">
-                          {csvPreview.sample.map((s, i) => (
-                            <span key={i} className="px-2 py-1 bg-white text-[10px] text-green-600 rounded-lg border border-green-200 font-medium">
-                              {s.name || 'User'} ({s.phone.slice(-4)})
-                            </span>
-                          ))}
+
+                        {/* List */}
+                        <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-1">
+                          {isLoadingCustomers ? (
+                            <div className="flex justify-center items-center h-full text-gray-400 text-sm">
+                              Memuat data...
+                            </div>
+                          ) : filteredCustomers.length === 0 ? (
+                            <div className="flex justify-center items-center h-full text-gray-400 text-sm">
+                              Tidak ada kontak ditemukan
+                            </div>
+                          ) : (
+                            filteredCustomers.map(customer => (
+                              <div
+                                key={customer._id}
+                                onClick={() => toggleSelectCustomer(customer._id)}
+                                className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-colors ${selectedCustomerIds.includes(customer._id) ? 'bg-primary-50 border border-primary-200' : 'hover:bg-gray-50 border border-transparent'}`}
+                              >
+                                <div className={`w-5 h-5 rounded-md border flex items-center justify-center ${selectedCustomerIds.includes(customer._id) ? 'bg-primary-500 border-primary-500' : 'border-gray-300 bg-white'}`}>
+                                  {selectedCustomerIds.includes(customer._id) && <Check className="w-3.5 h-3.5 text-white" />}
+                                </div>
+                                <div>
+                                  <p className="text-sm font-bold text-navy-900">{customer.name}</p>
+                                  <p className="text-xs text-gray-500">{customer.phone}</p>
+                                </div>
+                                {customer.tags && customer.tags.length > 0 && (
+                                  <div className="ml-auto flex gap-1">
+                                    {customer.tags.slice(0, 2).map((tag, i) => (
+                                      <span key={i} className="text-[10px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">{tag}</span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            ))
+                          )}
+                        </div>
+
+                        <div className="p-3 bg-gray-50 border-t border-gray-100 text-xs text-gray-500 text-center font-medium">
+                          {selectedCustomerIds.length} kontak dipilih dari {customers.length} total
                         </div>
                       </div>
                     )}

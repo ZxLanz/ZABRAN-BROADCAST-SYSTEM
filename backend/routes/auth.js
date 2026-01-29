@@ -39,8 +39,8 @@ router.post('/register',
 
       const { name, email, username, password, role } = req.body;
 
-      const existingUser = await User.findOne({ 
-        $or: [{ username }, { email }] 
+      const existingUser = await User.findOne({
+        $or: [{ username }, { email }]
       });
 
       if (existingUser) {
@@ -108,17 +108,17 @@ router.post('/login',
 
       const { username, password } = req.body;
 
-      const user = await User.findOne({ 
+      const user = await User.findOne({
         $or: [
           { username: username },
           { email: username }
-        ] 
+        ]
       }).select('+password');
 
       if (!user) {
-        return res.status(401).json({
+        return res.status(404).json({
           success: false,
-          message: 'Email/Username atau password salah'
+          message: 'Email atau Username tidak ditemukan'
         });
       }
 
@@ -127,18 +127,18 @@ router.post('/login',
       if (!isMatch) {
         return res.status(401).json({
           success: false,
-          message: 'Email/Username atau password salah'
+          message: 'Password salah'
         });
       }
 
       const token = jwt.sign(
-        { 
+        {
           id: user._id,
           username: user.username,
           email: user.email,
           role: user.role
         },
-        process.env.JWT_SECRET || 
+        process.env.JWT_SECRET ||
         'your-secret-key-change-this-in-production',
         { expiresIn: '7d' }
       );
@@ -178,7 +178,7 @@ router.post('/login',
 router.get('/me', async (req, res) => {
   try {
     const token = req.headers.authorization?.replace(
-      'Bearer ', 
+      'Bearer ',
       ''
     );
 
@@ -191,7 +191,7 @@ router.get('/me', async (req, res) => {
 
     const decoded = jwt.verify(
       token,
-      process.env.JWT_SECRET || 
+      process.env.JWT_SECRET ||
       'your-secret-key-change-this-in-production'
     );
 
@@ -227,7 +227,7 @@ router.get('/me', async (req, res) => {
 // ============================================
 // 🆕 PUT /api/auth/profile - Update profile
 // ============================================
-router.put('/profile', authenticate, 
+router.put('/profile', authenticate,
   [
     body('name').optional().notEmpty().withMessage('Nama tidak boleh kosong'),
     body('email').optional().isEmail().withMessage('Email tidak valid')
@@ -259,18 +259,18 @@ router.put('/profile', authenticate,
       if (name) user.name = name;
       if (email) {
         // Check if email already exists
-        const existingUser = await User.findOne({ 
-          email, 
-          _id: { $ne: userId } 
+        const existingUser = await User.findOne({
+          email,
+          _id: { $ne: userId }
         });
-        
+
         if (existingUser) {
           return res.status(400).json({
             success: false,
             message: 'Email sudah digunakan'
           });
         }
-        
+
         user.email = email;
       }
 

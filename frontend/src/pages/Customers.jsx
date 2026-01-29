@@ -1,7 +1,8 @@
-// frontend/src/pages/Customers.jsx - ✅ CLEANED VERSION (NO i18n)
+// frontend/src/pages/Customers.jsx
 import { useState, useEffect, useCallback } from 'react';
 import axios from '../utils/axios';
 import toast from 'react-hot-toast';
+import { useNavigate } from 'react-router-dom';
 import {
   Users,
   UserPlus,
@@ -21,7 +22,8 @@ import {
   Clock,
   XCircle,
   Phone,
-  Save
+  Save,
+  MessageSquare // Added
 } from 'lucide-react';
 
 import CustomerForm from '../components/CustomerForm';
@@ -32,6 +34,7 @@ import DeleteConfirm from '../components/DeleteConfirm';
 const API_BASE_URL = '/customers';
 
 export default function Customers() {
+  const navigate = useNavigate();
   const [customers, setCustomers] = useState([]);
   const [filteredCustomers, setFilteredCustomers] = useState([]);
   const [stats, setStats] = useState({
@@ -275,11 +278,11 @@ export default function Customers() {
       <div className="relative mb-10">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 relative">
           <div className="space-y-1">
-            <h1 className="text-3xl font-bold text-navy-900 tracking-tight flex items-center gap-3">
+            <h1 className="text-3xl font-bold text-navy-900 dark:text-white tracking-tight flex items-center gap-3">
               <Users className="w-10 h-10 text-primary-500" />
               Customers
             </h1>
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-widest flex items-center gap-2">
+            <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-widest flex items-center gap-2">
               <span className="w-1.5 h-1.5 bg-primary-500 rounded-full animate-pulse"></span>
               Pulse Management & Segment Insights
             </p>
@@ -338,14 +341,14 @@ export default function Customers() {
           };
 
           return (
-            <div key={index} className="bg-white rounded-2xl p-6 border border-gray-100 hover:shadow-lg transition-all flex items-start justify-between">
+            <div key={index} className="bg-white dark:bg-[#1f2937] rounded-2xl p-6 border border-gray-100 dark:border-gray-700 hover:shadow-lg transition-all flex items-start justify-between">
               <div className="space-y-3">
                 <div className={`w-10 h-10 rounded-xl ${colors[stat.color]} border flex items-center justify-center`}>
                   <Icon className="w-5 h-5" />
                 </div>
                 <div>
                   <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-0.5">{stat.label}</p>
-                  <h3 className="text-2xl font-bold text-navy-900">{stat.value}</h3>
+                  <h3 className="text-2xl font-bold text-navy-900 dark:text-white">{stat.value}</h3>
                 </div>
                 {stat.trend && (
                   <div className="flex items-center gap-1.5 px-2 py-0.5 bg-green-50 text-green-700 rounded-md w-fit">
@@ -366,7 +369,7 @@ export default function Customers() {
       <div className="space-y-8">
 
         {/* Toolbar: Filters & Search */}
-        <div className="bg-white rounded-2xl p-2 border border-gray-100 flex flex-col lg:flex-row gap-3 shadow-sm">
+        <div className="bg-white dark:bg-[#1f2937] rounded-2xl p-2 border border-gray-100 dark:border-gray-700 flex flex-col lg:flex-row gap-3 shadow-sm">
           <div className="flex-1 relative group">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 group-focus-within:text-primary-500 transition-colors" />
             <input
@@ -374,11 +377,11 @@ export default function Customers() {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search by name, phone..."
-              className="w-full pl-10 pr-4 py-2.5 bg-gray-50 border-transparent focus:bg-white focus:border-primary-200 rounded-xl outline-none font-medium text-sm text-navy-900 transition-all placeholder:text-gray-400"
+              className="w-full pl-10 pr-4 py-2.5 bg-gray-50 dark:bg-gray-800 border-transparent focus:bg-white dark:focus:bg-gray-700 focus:border-primary-200 rounded-xl outline-none font-medium text-sm text-navy-900 dark:text-white transition-all placeholder:text-gray-400"
             />
           </div>
 
-          <div className="flex bg-gray-50 p-1 rounded-xl gap-1">
+          <div className="flex bg-gray-50 dark:bg-gray-800 p-1 rounded-xl gap-1">
             {[
               { value: 'all', label: 'All' },
               { value: 'active', label: 'Active' },
@@ -389,8 +392,8 @@ export default function Customers() {
                 key={status.value}
                 onClick={() => setStatusFilter(status.value)}
                 className={`px-6 py-2 rounded-lg text-xs font-bold transition-all ${statusFilter === status.value
-                  ? 'bg-white text-navy-900 shadow-sm ring-1 ring-gray-100'
-                  : 'text-gray-400 hover:text-gray-600'
+                  ? 'bg-white dark:bg-gray-700 text-navy-900 dark:text-white shadow-sm ring-1 ring-gray-100 dark:ring-gray-600'
+                  : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'
                   }`}
               >
                 {status.label}
@@ -400,13 +403,13 @@ export default function Customers() {
         </div>
 
         {/* Audience Table Container */}
-        <div className="bg-white rounded-3xl border border-gray-100 overflow-hidden shadow-sm">
+        <div className="bg-white dark:bg-[#1f2937] rounded-3xl border border-gray-100 dark:border-gray-700 overflow-hidden shadow-sm">
 
           {/* Table Header Overlay */}
-          <div className="px-8 py-6 border-b border-gray-100 bg-gray-50/50 flex flex-col md:flex-row md:items-center justify-between gap-6">
+          <div className="px-8 py-6 border-b border-gray-100 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/50 flex flex-col md:flex-row md:items-center justify-between gap-6">
             <div className="flex items-center gap-3">
               <div className="w-1.5 h-6 bg-primary-500 rounded-full"></div>
-              <h2 className="text-xl font-bold text-navy-900 tracking-tight">
+              <h2 className="text-xl font-bold text-navy-900 dark:text-white tracking-tight">
                 Audience Records <span className="text-primary-500 opacity-50 ml-1">({filteredCustomers.length})</span>
               </h2>
             </div>
@@ -414,7 +417,7 @@ export default function Customers() {
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setIsSyncModalOpen(true)}
-                className="px-4 py-2 bg-white border border-gray-200 text-navy-800 rounded-lg font-bold text-[10px] tracking-widest flex items-center gap-2 hover:bg-primary-50 transition-all active:scale-95 shadow-sm"
+                className="px-4 py-2 bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 text-navy-800 dark:text-white rounded-lg font-bold text-[10px] tracking-widest flex items-center gap-2 hover:bg-primary-50 dark:hover:bg-primary-900/20 transition-all active:scale-95 shadow-sm"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
                 SYNC
@@ -422,7 +425,7 @@ export default function Customers() {
 
               <button
                 onClick={() => setIsImportModalOpen(true)}
-                className="px-4 py-2 bg-white border border-gray-200 text-navy-800 rounded-lg font-bold text-[10px] tracking-widest flex items-center gap-2 hover:bg-gray-50 transition-all active:scale-95 shadow-sm"
+                className="px-4 py-2 bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 text-navy-800 dark:text-white rounded-lg font-bold text-[10px] tracking-widest flex items-center gap-2 hover:bg-gray-50 dark:hover:bg-gray-600 transition-all active:scale-95 shadow-sm"
               >
                 <Upload className="w-3.5 h-3.5" />
                 IMPORT
@@ -459,35 +462,63 @@ export default function Customers() {
                   </thead>
                   <tbody>
                     {filteredCustomers.map((customer) => (
-                      <tr key={customer._id} className="group hover:bg-gray-50 transition-colors">
-                        <td className="px-6 py-4 bg-white rounded-l-2xl border-y border-l border-transparent group-hover:border-gray-100">
+                      <tr key={customer._id} className="group hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
+                        <td className="px-6 py-4 bg-white dark:bg-[#1f2937] rounded-l-2xl border-y border-l border-transparent group-hover:border-gray-100 dark:group-hover:border-gray-700">
                           <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 bg-primary-100 rounded-xl flex items-center justify-center font-bold text-primary-600">
+                            <div className="w-10 h-10 bg-primary-100 dark:bg-primary-900/20 rounded-xl flex items-center justify-center font-bold text-primary-600">
                               {customer.name[0].toUpperCase()}
                             </div>
                             <div>
-                              <div className="font-bold text-navy-900 text-sm">{customer.name}</div>
+                              <div className="font-bold text-navy-900 dark:text-white text-sm">{customer.name}</div>
                               <div className="text-[9px] font-medium text-gray-400 uppercase truncate max-w-[120px]">ID: {customer._id.slice(-8)}</div>
                             </div>
                           </div>
                         </td>
-                        <td className="px-6 py-4 bg-white border-y border-transparent group-hover:border-gray-100">
-                          <div className="flex items-center gap-2 font-medium text-gray-600 text-xs">
+                        <td className="px-6 py-4 bg-white dark:bg-[#1f2937] border-y border-transparent group-hover:border-gray-100 dark:group-hover:border-gray-700">
+                          <div className="flex items-center gap-2 font-medium text-gray-600 dark:text-gray-300 text-xs">
                             <Phone className="w-3 h-3 text-primary-400" />
                             {customer.phone}
                           </div>
                         </td>
-                        <td className="px-6 py-4 bg-white border-y border-transparent group-hover:border-gray-100">
+                        <td className="px-6 py-4 bg-white dark:bg-[#1f2937] border-y border-transparent group-hover:border-gray-100 dark:group-hover:border-gray-700">
                           {customer.tags && customer.tags.length > 0 ? (
                             <div className="flex flex-wrap gap-1">
-                              {customer.tags.slice(0, 2).map((tag, index) => (
-                                <span
-                                  key={index}
-                                  className="px-2 py-0.5 bg-gray-100 text-gray-500 rounded text-[9px] font-bold uppercase tracking-wider"
-                                >
-                                  {tag}
-                                </span>
-                              ))}
+                              {customer.tags.slice(0, 2).map((tag, index) => {
+                                const lowerTag = tag.toLowerCase();
+                                // Helper for consistent colors
+                                const getTagStyle = (t) => {
+                                  // ALL TAGS ARE AUTO-COLORED NOW
+
+                                  // Dynamic Auto-Color based on char code
+                                  const colors = [
+                                    "bg-blue-100 text-blue-700 border-blue-200",
+                                    "bg-emerald-100 text-emerald-700 border-emerald-200",
+                                    "bg-indigo-100 text-indigo-700 border-indigo-200",
+                                    "bg-pink-100 text-pink-700 border-pink-200",
+                                    "bg-cyan-100 text-cyan-700 border-cyan-200",
+                                    "bg-lime-100 text-lime-700 border-lime-200",
+                                    "bg-orange-100 text-orange-700 border-orange-200",
+                                    "bg-teal-100 text-teal-700 border-teal-200",
+                                    "bg-purple-100 text-purple-700 border-purple-200",
+                                    "bg-rose-100 text-rose-700 border-rose-200",
+                                    "bg-amber-100 text-amber-700 border-amber-200"
+                                  ];
+                                  // Use sum of char codes to pick index
+                                  const index = t.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0) % colors.length;
+                                  return colors[index];
+                                };
+
+                                const tagStyle = getTagStyle(lowerTag);
+
+                                return (
+                                  <span
+                                    key={index}
+                                    className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider border ${tagStyle}`}
+                                  >
+                                    {tag}
+                                  </span>
+                                );
+                              })}
                               {customer.tags.length > 2 && (
                                 <span className="px-2 py-0.5 bg-primary-500 text-navy-900 rounded text-[9px] font-bold uppercase">
                                   +{customer.tags.length - 2}
@@ -498,26 +529,33 @@ export default function Customers() {
                             <span className="text-gray-200 text-[9px] uppercase tracking-widest">None</span>
                           )}
                         </td>
-                        <td className="px-6 py-4 bg-white border-y border-transparent group-hover:border-gray-100">
+                        <td className="px-6 py-4 bg-white dark:bg-[#1f2937] border-y border-transparent group-hover:border-gray-100 dark:group-hover:border-gray-700">
                           {getStatusBadge(customer.status)}
                         </td>
-                        <td className="px-6 py-4 bg-white rounded-r-2xl border-y border-r border-transparent group-hover:border-gray-100">
+                        <td className="px-6 py-4 bg-white dark:bg-[#1f2937] rounded-r-2xl border-y border-r border-transparent group-hover:border-gray-100 dark:group-hover:border-gray-700">
                           <div className="flex gap-1.5">
                             <button
+                              onClick={() => navigate('/chats', { state: { startChat: customer } })}
+                              className="p-2 bg-gray-50 dark:bg-gray-800 text-gray-400 hover:bg-green-500 hover:text-white rounded-lg transition-all"
+                              title="Start Chat"
+                            >
+                              <MessageSquare className="w-4 h-4" />
+                            </button>
+                            <button
                               onClick={() => handleViewCustomer(customer)}
-                              className="p-2 bg-gray-50 text-gray-400 hover:bg-navy-900 hover:text-white rounded-lg transition-all"
+                              className="p-2 bg-gray-50 dark:bg-gray-800 text-gray-400 hover:bg-navy-900 hover:text-white rounded-lg transition-all"
                             >
                               <Eye className="w-4 h-4" />
                             </button>
                             <button
                               onClick={() => handleEditCustomer(customer)}
-                              className="p-2 bg-gray-50 text-gray-400 hover:bg-primary-500 hover:text-navy-900 rounded-lg transition-all"
+                              className="p-2 bg-gray-50 dark:bg-gray-800 text-gray-400 hover:bg-primary-500 hover:text-navy-900 rounded-lg transition-all"
                             >
                               <Edit className="w-4 h-4" />
                             </button>
                             <button
                               onClick={() => handleDeleteCustomer(customer)}
-                              className="p-2 bg-gray-50 text-gray-400 hover:bg-red-500 hover:text-white rounded-lg transition-all"
+                              className="p-2 bg-gray-50 dark:bg-gray-800 text-gray-400 hover:bg-red-500 hover:text-white rounded-lg transition-all"
                               disabled={isDeleting}
                             >
                               <Trash2 className="w-4 h-4" />
@@ -587,7 +625,7 @@ export default function Customers() {
       {isSyncModalOpen && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 animate-in fade-in duration-300">
           <div className="absolute inset-0 bg-navy-900/60 backdrop-blur-sm" onClick={() => setIsSyncModalOpen(false)}></div>
-          <div className="relative bg-white rounded-3xl shadow-2xl w-full max-w-xl overflow-hidden flex flex-col max-h-[85vh] animate-in zoom-in-95 duration-300 border border-white/20">
+          <div className="relative bg-white dark:bg-[#1f2937] rounded-3xl shadow-2xl w-full max-w-xl overflow-hidden flex flex-col max-h-[85vh] animate-in zoom-in-95 duration-300 border border-white/20 dark:border-gray-700">
 
             {/* Header */}
             <div className="bg-navy-900 px-8 py-6 relative overflow-hidden">
@@ -615,9 +653,9 @@ export default function Customers() {
                   <p className="text-navy-900 font-bold text-xs uppercase tracking-widest">Scanning Contacts...</p>
                 </div>
               ) : syncContacts.length === 0 ? (
-                <div className="text-center py-20 bg-gray-50 rounded-2xl border-2 border-dashed border-gray-100">
+                <div className="text-center py-20 bg-gray-50 dark:bg-gray-800 rounded-2xl border-2 border-dashed border-gray-100 dark:border-gray-700">
                   <CheckCircle2 className="w-16 h-16 text-green-500 mx-auto mb-4 opacity-30" />
-                  <h4 className="text-lg font-bold text-navy-900">Database Optimized</h4>
+                  <h4 className="text-lg font-bold text-navy-900 dark:text-white">Database Optimized</h4>
                   <p className="text-sm font-medium text-gray-400 max-w-[240px] mx-auto">All recent chat contacts are already in your audience list.</p>
                 </div>
               ) : (
@@ -640,7 +678,7 @@ export default function Customers() {
                       }}
                       className={`group p-4 rounded-2xl border transition-all flex items-center justify-between cursor-pointer ${selectedSyncContacts.includes(contact.phone)
                         ? 'border-primary-500 bg-primary-50/20 shadow-sm'
-                        : 'border-gray-100 bg-white hover:border-primary-200'
+                        : 'border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 hover:border-primary-200'
                         }`}
                     >
                       <div className="flex items-center gap-4">

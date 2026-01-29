@@ -1,12 +1,13 @@
-require('dotenv').config();
-const express = require('express');
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
+const express = require('express'); // Force Restart 31
 const mongoose = require('mongoose');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const connectDB = require('./config/database');
 
 // Import utilities
-const { autoConnectAllUsers, cleanupAllConnections } = require('./utils/whatsappClient');
+const { autoConnectAllUsers, cleanupAllConnections, storesMap } = require('./utils/whatsappClient');
 const { initScheduler, stopScheduler } = require('./services/scheduler');
 const { initSocket } = require('./services/socket');
 
@@ -17,7 +18,6 @@ const broadcastRoutes = require('./routes/broadcasts');
 const customerRoutes = require('./routes/customers');
 const templateRoutes = require('./routes/templates');
 const settingsRoutes = require('./routes/settings');
-// const reportRoutes = require('./routes/reports'); // Removed: File not found in directory listing
 const aiRoutes = require('./routes/ai');
 const notificationRoutes = require('./routes/notifications');
 const chatRoutes = require('./routes/chat');
@@ -25,35 +25,55 @@ const chatRoutes = require('./routes/chat');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// DEBUG ROUTE FOR CONTACTS
+app.get('/debug/contacts/:userId', (req, res) => {
+    try {
+        const store = storesMap.get(req.params.userId);
+        if (!store) return res.json({ count: 0, status: 'No Store Found' });
+
+        const contacts = store.contacts;
+        const keys = Object.keys(contacts);
+
+        // Find specific Irgi or 895
+        const irgi = keys.find(k => k.includes('895393900802'));
+
+        res.json({
+            count: keys.length,
+            irgi_match: irgi ? { jid: irgi, data: contacts[irgi] } : 'Not Found',
+            sample: keys.slice(0, 5).map(k => ({ jid: k, name: contacts[k].name, notify: contacts[k].notify }))
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Middleware
 const corsOptions = {
-    origin: (origin, callback) => {
-        const allowedOrigins = [
-            process.env.FRONTEND_URL,
-            'http://localhost:5173',
-            'http://localhost:5174'
-        ].filter(Boolean);
-
-        if (!origin || allowedOrigins.includes(origin)) {
-            callback(null, true);
-        } else {
-            callback(new Error('Not allowed by CORS'));
-        }
-    },
+    origin: [
+        'http://localhost',
+        'http://127.0.0.1',
+        'http://localhost:5173',
+        'http://localhost:3000',
+        process.env.FRONTEND_URL
+    ].filter(Boolean),
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization']
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 };
 
 app.use(cors(corsOptions));
+// Serve Static Media
+app.use('/media', express.static(path.join(__dirname, 'public/media')));
+
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // ==================== RATE LIMITING ====================
 // Global rate limiter - applies to all requests
+// Global rate limiter - applies to all requests
 const globalLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 100, // 100 requests per windowMs
+    max: 1000, // INCREASED: 1000 requests per windowMs (was 100)
     message: 'Too many requests from this IP, please try again later.',
     standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
     legacyHeaders: false, // Disable the `X-RateLimit-*` headers
@@ -62,27 +82,31 @@ const globalLimiter = rateLimit({
 app.use(globalLimiter);
 
 // Auth endpoints - stricter limit
+// Auth endpoints - stricter limit
+// Auth endpoints - stricter limit (Anti-Brute Force)
 const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 5, // 5 requests per 15 minutes (for login/register attempts)
+    max: 20, // STRICT: 20 requests per 15 mins
     message: 'Too many authentication attempts, please try again later.',
     standardHeaders: true,
     legacyHeaders: false
 });
 
 // Broadcast endpoints - moderate limit
+// Broadcast endpoints - moderate limit
 const broadcastLimiter = rateLimit({
     windowMs: 60 * 1000, // 1 minute
-    max: 20, // 20 requests per minute
+    max: 200, // INCREASED: 200 requests (was 20)
     message: 'Too many broadcast requests, please try again later.',
     standardHeaders: true,
     legacyHeaders: false
 });
 
 // Chat/Message endpoints - higher limit (real-time)
+// Chat/Message endpoints - higher limit (real-time)
 const chatLimiter = rateLimit({
     windowMs: 60 * 1000, // 1 minute
-    max: 50, // 50 requests per minute
+    max: 500, // INCREASED: 500 requests (was 50)
     message: 'Too many chat requests, please try again later.',
     standardHeaders: true,
     legacyHeaders: false
@@ -98,8 +122,18 @@ const customerLimiter = rateLimit({
 });
 
 // Routes
+// WhatsApp endpoints - higher limit for status polling and QR generation
+// WhatsApp endpoints - higher limit for status polling and QR generation
+const whatsappLimiter = rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: 500, // INCREASED: 500 requests (was 100)
+    message: 'Too many WhatsApp requests, please try again later.',
+    standardHeaders: true,
+    legacyHeaders: false
+});
+
 app.use('/api/auth', authLimiter, authRoutes);
-app.use('/api/whatsapp', globalLimiter, whatsappRoutes);
+app.use('/api/whatsapp', whatsappLimiter, whatsappRoutes);
 app.use('/api/broadcasts', broadcastLimiter, broadcastRoutes);
 app.use('/api/customers', customerLimiter, customerRoutes);
 app.use('/api/templates', customerLimiter, templateRoutes);
@@ -130,21 +164,28 @@ const startServer = async () => {
         initSocket(server, corsOptions);
         console.log('🔌 Socket.IO Server Initialized');
 
-        // ✅ AUTO-CONNECT WHATSAPP AFTER SERVER READY
-        mongoose.connection.once('open', async () => {
-            console.log('✅ MongoDB Connected');
-            console.log('\n🔄 [STARTUP] Initializing WhatsApp auto-connect...');
-
-            // Wait 3 seconds for server to stabilize
+        // ✅ AUTO-CONNECT WHATSAPP (Robust Logic)
+        const initWhatsApp = async () => {
+            console.log('\n🔄 [STARTUP] initializing WhatsApp auto-connect...');
+            // Wait 2 seconds for server to stabilize
             setTimeout(async () => {
                 try {
                     await autoConnectAllUsers();
                 } catch (err) {
                     console.error('❌ [STARTUP] Auto-connect failed:', err.message);
-                    console.log('💡 WhatsApp clients can be connected manually via /api/whatsapp/connect');
                 }
-            }, 3000);
-        });
+            }, 2000);
+        };
+
+        if (mongoose.connection.readyState === 1) {
+            console.log('✅ MongoDB already connected');
+            initWhatsApp();
+        } else {
+            mongoose.connection.once('open', async () => {
+                console.log('✅ MongoDB Connected');
+                initWhatsApp();
+            });
+        }
 
         // Initialize Broadcast Scheduler
         initScheduler();

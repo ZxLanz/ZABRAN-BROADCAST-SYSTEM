@@ -29,12 +29,18 @@ const chatMessageSchema = new mongoose.Schema({
         type: String,
         default: ''
     },
-    mediaUrl: { // If image/video, where it is stored (optional for now)
+    mediaUrl: { // Public URL e.g. /media/xxx.jpg
+        type: String
+    },
+    mediaPath: { // Internal file path
+        type: String
+    },
+    mediaType: { // MIME type e.g. image/jpeg
         type: String
     },
     status: { // sent, delivered, read (only for outgoing)
         type: String,
-        enum: ['pending', 'sent', 'delivered', 'read'],
+        enum: ['pending', 'sent', 'delivered', 'read', 'failed'],
         default: 'sent'
     },
     timestamp: {
@@ -47,6 +53,11 @@ const chatMessageSchema = new mongoose.Schema({
     extractedPhone: { // Phone number extracted from remoteJid (if available)
         type: String,
         index: true
+    },
+    quotedMsg: { // Context for replies
+        content: String,
+        participant: String,
+        id: String
     }
 }, {
     timestamps: true

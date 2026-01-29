@@ -28,15 +28,16 @@ import Templates from "./pages/Templates";
 import WhatsApp from "./pages/WhatsApp";
 import Reports from "./pages/Reports";
 import AIGenerator from "./pages/AIGenerator";
-import LiveChat from "./pages/LiveChat"; // ✅ CHANGED from Customers
-import Customers from "./pages/Customers"; // ✅ RESTORED
+import LiveChat from "./pages/LiveChat";
+import Customers from "./pages/Customers";
 import Broadcast from "./pages/Broadcast";
 import Unauthorized from "./pages/Unauthorized";
 import Notifications from "./pages/Notifications";
 import Profile from "./pages/Profile";
+import AutoReply from "./pages/AutoReply";
 
 function App() {
-  // ✅ SETUP AXIOS INTERCEPTOR - AUTO ATTACH TOKEN
+
   useEffect(() => {
     // Request interceptor - Add token to all requests
     const requestInterceptor = axios.interceptors.request.use(
@@ -148,6 +149,7 @@ function App() {
                 />
 
                 {/* MAIN PAGES (ALL USERS) */}
+                <Route path="auto-reply" element={<AutoReply />} />
                 <Route path="broadcast" element={<Broadcast />} />
                 <Route path="customers" element={<Customers />} />
                 <Route path="templates" element={<Templates />} />

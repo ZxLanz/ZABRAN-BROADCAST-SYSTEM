@@ -52,7 +52,7 @@ const NOTIFICATION_TYPES = {
     title: 'Broadcast Deleted',
     getMessage: (data) => `Broadcast "${data.name}" has been deleted.`
   },
-  
+
   // 📱 WhatsApp Events
   WHATSAPP_CONNECTED: {
     type: 'success',
@@ -84,7 +84,7 @@ const NOTIFICATION_TYPES = {
     title: 'WhatsApp Error',
     getMessage: (data) => `WhatsApp connection error: ${data.error || 'Unknown error'}.`
   },
-  
+
   // 👥 Customer Events
   CUSTOMER_ADDED: {
     type: 'success',
@@ -110,7 +110,7 @@ const NOTIFICATION_TYPES = {
     title: 'Customer Deleted',
     getMessage: (data) => `Customer "${data.name}" has been deleted.`
   },
-  
+
   // 📝 Template Events
   TEMPLATE_CREATED: {
     type: 'success',
@@ -136,7 +136,7 @@ const NOTIFICATION_TYPES = {
     title: 'Template Duplicated',
     getMessage: (data) => `Template "${data.originalName}" has been duplicated as "${data.newName}".`
   },
-  
+
   // ⚙️ System Events
   LOGIN_SUCCESS: {
     type: 'success',
@@ -174,14 +174,10 @@ const NOTIFICATION_TYPES = {
 // 🔧 CORE NOTIFICATION FUNCTION
 // ============================================
 
-/**
- * Create a notification for a user
- * @param {String} userId - User ID (MongoDB ObjectId)
- * @param {String} eventType - Event type from NOTIFICATION_TYPES
- * @param {Object} data - Additional data for the notification
- * @param {Object} options - Optional settings (actionUrl, metadata)
- * @returns {Promise<Object>} Created notification or null
- */
+// ... (imports)
+const { getIO } = require('../services/socket');
+// ...
+
 async function createNotification(userId, eventType, data = {}, options = {}) {
   try {
     // Validate event type
@@ -212,6 +208,17 @@ async function createNotification(userId, eventType, data = {}, options = {}) {
     });
 
     console.log(`✅ [NOTIFICATION] Created: ${eventType} for user ${userId}`);
+
+    // 📡 Emit Socket Event
+    try {
+      const io = getIO();
+      io.to(`user_${userId}`).emit('new_notification', notification);
+      // console.log(`📡 [NOTIFICATION] Emitted socket event to user_${userId}`);
+    } catch (socketError) {
+      // Socket might not be initialized during tests or scripts
+      // console.warn('⚠️ [NOTIFICATION] Socket emit failed:', socketError.message);
+    }
+
     return notification;
 
   } catch (error) {
@@ -459,17 +466,17 @@ async function notifySettingsUpdated(userId) {
  */
 async function createBatchNotifications(notificationConfigs) {
   try {
-    const promises = notificationConfigs.map(config => 
+    const promises = notificationConfigs.map(config =>
       createNotification(config.userId, config.eventType, config.data, config.options)
     );
-    
+
     const results = await Promise.allSettled(promises);
-    
+
     const successful = results.filter(r => r.status === 'fulfilled' && r.value !== null);
     const failed = results.filter(r => r.status === 'rejected' || r.value === null);
-    
+
     console.log(`✅ [NOTIFICATION] Batch: ${successful.length} created, ${failed.length} failed`);
-    
+
     return successful.map(r => r.value);
   } catch (error) {
     console.error(`❌ [NOTIFICATION] Batch error:`, error.message);
@@ -484,7 +491,7 @@ async function createBatchNotifications(notificationConfigs) {
 module.exports = {
   // Core function
   createNotification,
-  
+
   // Broadcast notifications
   notifyBroadcastCreated,
   notifyBroadcastStarted,
@@ -493,36 +500,36 @@ module.exports = {
   notifyBroadcastPaused,
   notifyBroadcastResumed,
   notifyBroadcastDeleted,
-  
+
   // WhatsApp notifications
   notifyWhatsAppConnected,
   notifyWhatsAppDisconnected,
   notifyWhatsAppQRReady,
   notifyWhatsAppReconnecting,
   notifyWhatsAppError,
-  
+
   // Customer notifications
   notifyCustomerAdded,
   notifyCustomerImported,
   notifyCustomerUpdated,
   notifyCustomerDeleted,
-  
+
   // Template notifications
   notifyTemplateCreated,
   notifyTemplateUpdated,
   notifyTemplateDeleted,
   notifyTemplateDuplicated,
-  
+
   // System notifications
   notifyLoginSuccess,
   notifyLoginFailed,
   notifyPasswordChanged,
   notifyProfileUpdated,
   notifySettingsUpdated,
-  
+
   // Batch operations
   createBatchNotifications,
-  
+
   // Config export (for reference)
   NOTIFICATION_TYPES
 };

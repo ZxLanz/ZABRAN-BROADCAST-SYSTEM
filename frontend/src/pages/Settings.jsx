@@ -3,12 +3,12 @@ import { useState, useEffect } from 'react';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 import { useTheme } from '../contexts/ThemeContext';
-import { 
-  Save, 
-  RotateCcw, 
-  Smartphone, 
-  Bell, 
-  Eye, 
+import {
+  Save,
+  RotateCcw,
+  Smartphone,
+  Bell,
+  Eye,
   MessageCircle,
   Palette,
   Clock,
@@ -23,32 +23,20 @@ import {
 
 export default function Settings() {
   const { theme, setTheme } = useTheme();
-  
+
   // Loading States
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [refreshingWA, setRefreshingWA] = useState(false);
-  
+
   // Settings State
   const [settings, setSettings] = useState({
-    autoReply: false,
-    autoReplyMessage: '',
     readReceipts: true,
     notifications: true,
-    theme: 'light',
-    businessHoursEnabled: false,
-    businessHours: {
-      monday: { enabled: true, open: '09:00', close: '17:00' },
-      tuesday: { enabled: true, open: '09:00', close: '17:00' },
-      wednesday: { enabled: true, open: '09:00', close: '17:00' },
-      thursday: { enabled: true, open: '09:00', close: '17:00' },
-      friday: { enabled: true, open: '09:00', close: '17:00' },
-      saturday: { enabled: false, open: '09:00', close: '17:00' },
-      sunday: { enabled: false, open: '09:00', close: '17:00' }
-    }
+    theme: 'light'
   });
-  
+
   // WhatsApp State
   const [whatsappStatus, setWhatsappStatus] = useState({
     connected: false,
@@ -68,7 +56,7 @@ export default function Settings() {
     const interval = setInterval(() => {
       checkWhatsAppStatus();
     }, 5000);
-    
+
     return () => clearInterval(interval);
   }, []);
 
@@ -76,7 +64,7 @@ export default function Settings() {
     try {
       setLoading(true);
       const response = await axios.get('/api/settings');
-      
+
       if (response.data.success) {
         const loadedSettings = response.data.data;
         setSettings(loadedSettings);
@@ -95,13 +83,13 @@ export default function Settings() {
       const response = await axios.get('/api/whatsapp/status');
       if (response.data.success) {
         const isConnected = response.data.status === 'connected';
-        
+
         let deviceString = '';
         if (response.data.deviceInfo) {
           const { name, number } = response.data.deviceInfo;
           deviceString = `${name} (${number})`;
         }
-        
+
         setWhatsappStatus(prev => ({
           ...prev,
           connected: isConnected,
@@ -122,9 +110,9 @@ export default function Settings() {
   const handleSave = async () => {
     try {
       setSaving(true);
-      
+
       const response = await axios.put('/api/settings', settings);
-      
+
       if (response.data.success) {
         toast.success('Settings saved successfully');
         setTheme(settings.theme);
@@ -141,12 +129,12 @@ export default function Settings() {
     if (!confirm('Reset settings to default?')) {
       return;
     }
-    
+
     try {
       setResetting(true);
-      
+
       const response = await axios.post('/api/settings/reset');
-      
+
       if (response.data.success) {
         setSettings(response.data.data);
         setTheme(response.data.data.theme);
@@ -164,10 +152,10 @@ export default function Settings() {
     try {
       setConnectingWA(true);
       const response = await axios.post('/api/whatsapp/connect');
-      
+
       if (response.data.success) {
         toast.success('WhatsApp connection initiated');
-        
+
         if (response.data.status !== 'connected') {
           setTimeout(async () => {
             try {
@@ -184,7 +172,7 @@ export default function Settings() {
             }
           }, 2000);
         }
-        
+
         await checkWhatsAppStatus();
       }
     } catch (error) {
@@ -199,10 +187,10 @@ export default function Settings() {
     if (!confirm('Disconnect WhatsApp? You will need to scan QR code again.')) {
       return;
     }
-    
+
     try {
       const response = await axios.post('/api/whatsapp/logout');
-      
+
       if (response.data.success) {
         toast.success('WhatsApp disconnected successfully');
         setWhatsappStatus({
@@ -223,19 +211,11 @@ export default function Settings() {
       ...prev,
       [key]: value
     }));
-  };
 
-  const updateBusinessHours = (day, field, value) => {
-    setSettings(prev => ({
-      ...prev,
-      businessHours: {
-        ...prev.businessHours,
-        [day]: {
-          ...prev.businessHours[day],
-          [field]: value
-        }
-      }
-    }));
+    // Instant Theme Preview
+    if (key === 'theme') {
+      setTheme(value);
+    }
   };
 
   if (loading) {
@@ -248,7 +228,7 @@ export default function Settings() {
 
   return (
     <div className="animate-slide-in">
-      
+
       {/* Page Header - CONSISTENT STYLE */}
       <div className="mb-8">
         <div className="flex items-center justify-between mb-2">
@@ -260,7 +240,7 @@ export default function Settings() {
               Manage your application preferences and configurations
             </p>
           </div>
-          
+
           <div className="flex gap-3">
             <button
               onClick={handleReset}
@@ -274,7 +254,7 @@ export default function Settings() {
               )}
               <span>Reset</span>
             </button>
-            
+
             <button
               onClick={handleSave}
               disabled={saving}
@@ -303,7 +283,7 @@ export default function Settings() {
               <p className="text-sm text-gray-600 font-medium mt-0.5">Manage your WhatsApp integration</p>
             </div>
           </div>
-          
+
           <button
             onClick={handleRefreshStatus}
             disabled={refreshingWA}
@@ -342,12 +322,11 @@ export default function Settings() {
                 </>
               )}
             </div>
-            
-            <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold ${
-              whatsappStatus.connected 
-                ? 'bg-green-100 text-green-700' 
-                : 'bg-gray-100 text-gray-600'
-            }`}>
+
+            <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold ${whatsappStatus.connected
+              ? 'bg-green-100 text-green-700'
+              : 'bg-gray-100 text-gray-600'
+              }`}>
               {whatsappStatus.connected ? (
                 <>
                   <Check className="w-3.5 h-3.5" />
@@ -369,10 +348,10 @@ export default function Settings() {
                 📱 Scan this QR code with WhatsApp on your phone
               </p>
               <div className="flex justify-center">
-                <img 
-                  src={whatsappStatus.qrCode} 
-                  alt="QR Code" 
-                  className="w-64 h-64 border-4 border-yellow-300 rounded-xl shadow-lg" 
+                <img
+                  src={whatsappStatus.qrCode}
+                  alt="QR Code"
+                  className="w-64 h-64 border-4 border-yellow-300 rounded-xl shadow-lg"
                 />
               </div>
               <p className="text-xs text-yellow-700 mt-4 text-center font-semibold">
@@ -422,42 +401,6 @@ export default function Settings() {
         </div>
 
         <div className="space-y-5">
-          {/* Auto Reply Toggle */}
-          <div className="flex items-center justify-between py-4 border-b-2 border-gray-100">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-blue-50 rounded-lg">
-                <MessageCircle className="w-5 h-5 text-blue-500" />
-              </div>
-              <div>
-                <p className="font-bold text-navy-800">Auto Reply</p>
-                <p className="text-sm text-gray-600 font-medium">Automatically reply to incoming messages</p>
-              </div>
-            </div>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                checked={settings.autoReply}
-                onChange={(e) => updateSetting('autoReply', e.target.checked)}
-                className="sr-only peer"
-              />
-              <div className="w-14 h-7 bg-gray-300 peer-focus:ring-4 peer-focus:ring-primary-500/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[4px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-primary-500 shadow-inner"></div>
-            </label>
-          </div>
-
-          {/* Auto Reply Message */}
-          {settings.autoReply && (
-            <div className="pl-11 pb-4">
-              <label className="block text-sm font-bold text-navy-800 mb-2">Auto Reply Message</label>
-              <textarea
-                value={settings.autoReplyMessage}
-                onChange={(e) => updateSetting('autoReplyMessage', e.target.value)}
-                className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl font-medium focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-none"
-                rows="3"
-                placeholder="Enter your auto-reply message..."
-              />
-            </div>
-          )}
-
           {/* Read Receipts */}
           <div className="flex items-center justify-between py-4 border-b-2 border-gray-100">
             <div className="flex items-center gap-3">
@@ -524,67 +467,6 @@ export default function Settings() {
             </select>
           </div>
         </div>
-      </div>
-
-      {/* Business Hours Card - CONSISTENT STYLE */}
-      <div className="card p-7">
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-3">
-            <div className="w-14 h-14 bg-blue-500/10 border border-blue-500/20 rounded-2xl flex items-center justify-center shadow-sm">
-              <Clock className="w-7 h-7 text-blue-500" />
-            </div>
-            <div>
-              <h2 className="text-2xl font-black text-navy-800 tracking-tight">Business Hours</h2>
-              <p className="text-sm text-gray-600 font-medium mt-0.5">Set working hours for auto-reply</p>
-            </div>
-          </div>
-          
-          <label className="relative inline-flex items-center cursor-pointer">
-            <input
-              type="checkbox"
-              checked={settings.businessHoursEnabled}
-              onChange={(e) => updateSetting('businessHoursEnabled', e.target.checked)}
-              className="sr-only peer"
-            />
-            <div className="w-14 h-7 bg-gray-300 peer-focus:ring-4 peer-focus:ring-primary-500/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[4px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-primary-500 shadow-inner"></div>
-          </label>
-        </div>
-
-        {settings.businessHoursEnabled && (
-          <div className="space-y-3">
-            {Object.entries(settings.businessHours).map(([day, hours]) => (
-              <div key={day} className="flex items-center gap-4 p-4 bg-gray-50 rounded-xl border border-gray-200">
-                <label className="flex items-center gap-2 w-32">
-                  <input
-                    type="checkbox"
-                    checked={hours.enabled}
-                    onChange={(e) => updateBusinessHours(day, 'enabled', e.target.checked)}
-                    className="w-4 h-4 text-primary-500 border-2 border-gray-300 rounded focus:ring-primary-500"
-                  />
-                  <span className="font-bold text-navy-800 capitalize">{day}</span>
-                </label>
-                
-                {hours.enabled && (
-                  <div className="flex items-center gap-3 flex-1">
-                    <input
-                      type="time"
-                      value={hours.open}
-                      onChange={(e) => updateBusinessHours(day, 'open', e.target.value)}
-                      className="px-4 py-2.5 border-2 border-gray-300 rounded-xl font-semibold text-gray-700 hover:border-primary-500 transition-colors flex-1"
-                    />
-                    <span className="text-gray-500 font-bold">→</span>
-                    <input
-                      type="time"
-                      value={hours.close}
-                      onChange={(e) => updateBusinessHours(day, 'close', e.target.value)}
-                      className="px-4 py-2.5 border-2 border-gray-300 rounded-xl font-semibold text-gray-700 hover:border-primary-500 transition-colors flex-1"
-                    />
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
       </div>
 
     </div>

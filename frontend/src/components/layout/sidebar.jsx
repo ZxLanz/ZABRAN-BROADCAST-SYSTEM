@@ -31,6 +31,7 @@ export default function Sidebar() {
     { name: 'Customers', path: '/customers', icon: Users },
     { name: 'Templates', path: '/templates', icon: FileText },
     { name: 'AI Generator', path: '/ai-generator', icon: Sparkles },
+    { name: 'Auto Reply AI', path: '/auto-reply', icon: MessageSquare }, // Changed Icon to avoid duplicate, or reuse MessageSquare
   ];
 
   // Tools menu items

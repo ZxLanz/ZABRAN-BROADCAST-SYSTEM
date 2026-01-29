@@ -253,7 +253,8 @@ router.post('/',
         division,
         company,
         city,
-        notes
+        notes,
+        jid // Optional: JID to link
       } = req.body;
 
       // Normalize phone number
@@ -264,31 +265,63 @@ router.post('/',
         normalizedPhone = '62' + normalizedPhone;
       }
 
-      // Check duplicate phone
-      const existingCustomer = await Customer.findOne({
-        phone: normalizedPhone,
-        createdBy: userId
-      });
+      // Check if phone already exists
+      let existingCustomer = await Customer.findOne({ phone: normalizedPhone, createdBy: userId });
 
       if (existingCustomer) {
+        // If customer exists, we might want to update JIDs
+        if (jid && !existingCustomer.jids?.includes(jid)) {
+          existingCustomer.jids = existingCustomer.jids || [];
+          existingCustomer.jids.push(jid);
+
+          // Also update name if needed
+          if (existingCustomer.name !== name) {
+            existingCustomer.name = name;
+          }
+
+          await existingCustomer.save();
+
+          notifyCustomerUpdated(userId, existingCustomer.name);
+
+          return res.json({
+            success: true,
+            message: 'Kontak diperbarui dan JID ditautkan.',
+            data: existingCustomer
+          });
+        }
+
+        // If just name update
+        if (existingCustomer.name !== name) {
+          existingCustomer.name = name;
+          await existingCustomer.save();
+          notifyCustomerUpdated(userId, existingCustomer.name);
+          return res.json({
+            success: true,
+            message: 'Nama kontak diperbarui.',
+            data: existingCustomer
+          });
+        }
+
         return res.status(400).json({
           success: false,
           message: 'Nomor telepon sudah terdaftar'
         });
       }
 
+      // Create new customer
       const customer = new Customer({
         name,
         phone: normalizedPhone,
         email,
         address,
-        tags: tags || [],
+        tags: tags ? (Array.isArray(tags) ? tags : tags.split(',').map(tag => tag.trim())) : [],
         status: status || 'active',
         division,
         company,
         city,
         notes,
-        createdBy: userId
+        createdBy: userId,
+        jids: jid ? [jid] : []
       });
 
       await customer.save();
@@ -423,6 +456,36 @@ router.put('/:id',
     }
   }
 );
+
+// UPDATE CUSTOMER TAGS (PATCH)
+router.patch('/:id/tags', async (req, res) => {
+  try {
+    const { role, id: userId } = req.user;
+    const { tags } = req.body;
+
+    const customer = await Customer.findById(req.params.id);
+
+    if (!customer) {
+      return res.status(404).json({ success: false, message: 'Customer tidak ditemukan' });
+    }
+
+    if (role !== 'admin' && customer.createdBy?.toString() !== userId) {
+      return res.status(403).json({ success: false, message: 'Akses ditolak' });
+    }
+
+    customer.tags = tags || [];
+    await customer.save();
+
+    console.log(`✅ Customer Tags updated: ${customer.phone} -> ${tags}`);
+
+    // Notify if needed
+    // await notifyCustomerUpdated(userId, customer);
+
+    res.json({ success: true, message: 'Tags updated successfully', data: customer });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
 
 // DELETE CUSTOMER
 router.delete('/:id', async (req, res) => {

@@ -1,20 +1,31 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
 import axios from '../utils/axios';
 import { toast } from 'react-hot-toast';
 import { io } from 'socket.io-client';
 import {
-    Search, Send, MoreVertical,
-    ArrowLeft, CheckCheck, MessageSquare, Trash2, X, UserPlus
+    MessageSquare, Send, Paperclip, MoreVertical, Search,
+    Check, CheckCheck, Trash2, X, Image as ImageIcon, FileText,
+    Smile, Download, Mic, StopCircle, User, Phone, Video, Plus, UserPlus, Save, ArrowLeft, Music // Added icons
 } from 'lucide-react';
+import ChatAvatar from '../components/ChatAvatar';
 import DeleteConfirm from '../components/DeleteConfirm';
+import TagManagementModal from '../components/TagManagementModal';
+import { Edit } from 'lucide-react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
 export default function LiveChat() {
     const [conversations, setConversations] = useState([]);
     const [selectedChat, setSelectedChat] = useState(null);
+    const [selectedImage, setSelectedImage] = useState(null); // Lightbox State
     const [messages, setMessages] = useState([]);
     const [inputText, setInputText] = useState('');
+    const [customers, setCustomers] = useState([]); // Store customers for tagging logic
+
+    // ... (rest of logic)
+
+
     const [searchQuery, setSearchQuery] = useState('');
     const [isLoadingChats, setIsLoadingChats] = useState(true);
     const [isLoadingMessages, setIsLoadingMessages] = useState(false);
@@ -23,10 +34,171 @@ export default function LiveChat() {
     const [messageSearchQuery, setMessageSearchQuery] = useState('');
     const [showDeleteModal, setShowDeleteModal] = useState(false);
     const [isDeletingChat, setIsDeletingChat] = useState(false);
+    // Save Contact Modal State
+    const [isSaveContactModalOpen, setIsSaveContactModalOpen] = useState(false);
+    const [saveContactName, setSaveContactName] = useState('');
 
     const socketRef = useRef();
     const messagesEndRef = useRef(null);
     const menuRef = useRef(null);
+    const fileInputRef = useRef(null);
+    const uploadTypeRef = useRef('document');
+    const [showAttachMenu, setShowAttachMenu] = useState(false);
+    const [saveContactPhone, setSaveContactPhone] = useState('');
+    const [saveContactTags, setSaveContactTags] = useState([]);
+    const [saveContactTagInput, setSaveContactTagInput] = useState('');
+    const [isTagModalOpen, setIsTagModalOpen] = useState(false);
+    // New Chat State
+    const [isNewChatModalOpen, setIsNewChatModalOpen] = useState(false);
+    const [newChatPhone, setNewChatPhone] = useState('');
+    const [newChatName, setNewChatName] = useState('');
+
+    // --- VOICE RECORDER STATE ---
+    const [isRecording, setIsRecording] = useState(false);
+    const [recordingDuration, setRecordingDuration] = useState(0);
+    const mediaRecorderRef = useRef(null);
+    const audioChunksRef = useRef([]);
+    const timerRef = useRef(null);
+
+    // Format Duration (mm:ss)
+    const formatDuration = (seconds) => {
+        const mins = Math.floor(seconds / 60);
+        const secs = seconds % 60;
+        return `${mins}:${secs.toString().padStart(2, '0')}`;
+    };
+
+    const startRecording = async () => {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const mediaRecorder = new MediaRecorder(stream);
+            mediaRecorderRef.current = mediaRecorder;
+            audioChunksRef.current = [];
+
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data.size > 0) {
+                    audioChunksRef.current.push(event.data);
+                }
+            };
+
+            mediaRecorder.onstop = async () => {
+                const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+                // Convert to File
+                const audioFile = new File([audioBlob], "voice_note.webm", { type: 'audio/webm' });
+
+                // Helper to send (reuse existing logic)
+                await sendVoiceNote(audioFile);
+
+                // Stop tracks
+                stream.getTracks().forEach(track => track.stop());
+            };
+
+            mediaRecorder.start();
+            setIsRecording(true);
+
+            // Start Timer
+            setRecordingDuration(0);
+            timerRef.current = setInterval(() => {
+                setRecordingDuration(prev => prev + 1);
+            }, 1000);
+
+        } catch (err) {
+            console.error('Error accessing microphone:', err);
+            toast.error('Gagal mengakses mikrofon. Pastikan izin diberikan.');
+        }
+    };
+
+    const stopRecording = () => {
+        if (mediaRecorderRef.current && isRecording) {
+            mediaRecorderRef.current.stop();
+            setIsRecording(false);
+            clearInterval(timerRef.current);
+        }
+    };
+
+    const cancelRecording = () => {
+        if (mediaRecorderRef.current && isRecording) {
+            // Stop but don't process
+            mediaRecorderRef.current.onstop = null; // Clear handler
+            mediaRecorderRef.current.stop();
+            // Stop tracks
+            mediaRecorderRef.current.stream?.getTracks().forEach(track => track.stop());
+
+            setIsRecording(false);
+            setRecordingDuration(0);
+            clearInterval(timerRef.current);
+        }
+    };
+
+    const sendVoiceNote = async (file) => {
+        const toastId = toast.loading('Sending voice note...');
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('type', 'audio');
+
+        try {
+            const currentJid = selectedChat._id || selectedChat.remoteJid;
+            let targetJid = currentJid;
+            if (selectedChat.cleanPhone) targetJid = selectedChat.cleanPhone;
+
+            await axios.post(`${API_URL}/chats/${targetJid}/send-media`, formData, {
+                headers: { 'Content-Type': 'multipart/form-data' }
+            });
+
+            toast.success('Voice note sent!', { id: toastId });
+        } catch (error) {
+            console.error('Upload error:', error);
+            toast.error('Failed to send voice note', { id: toastId });
+        }
+    };
+
+    // File Upload Handler
+    const handleFileSelect = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        setShowAttachMenu(false); // Close menu
+
+        // Optimistic UI (Optional) or just Loading Toast
+        const toastId = toast.loading('Sending media...');
+
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('type', uploadTypeRef.current);
+        // formData.append('caption', inputText); // Optional caption handling
+
+        try {
+            const currentJid = selectedChat._id || selectedChat.remoteJid;
+            // Clean JID logic if needed
+            let targetJid = currentJid;
+            if (selectedChat.cleanPhone) targetJid = selectedChat.cleanPhone;
+
+            await axios.post(`${API_URL}/chats/${targetJid}/send-media`, formData, {
+                headers: { 'Content-Type': 'multipart/form-data' }
+            });
+
+            toast.success('Sent!', { id: toastId });
+            setInputText(''); // Clear caption if we supported it
+        } catch (error) {
+            console.error('Upload error:', error);
+            toast.error('Failed to send media', { id: toastId });
+        }
+
+        // Reset input
+        e.target.value = '';
+    };
+
+    const triggerFileUpload = (type) => {
+        uploadTypeRef.current = type;
+        if (fileInputRef.current) {
+            let accept = '*/*';
+            if (type === 'image') accept = 'image/*';
+            else if (type === 'video') accept = 'video/*';
+            else if (type === 'audio') accept = 'audio/*';
+
+            fileInputRef.current.accept = accept;
+            fileInputRef.current.click();
+        }
+    };
 
     // --- 1. HELPER FUNCTIONS (Defined FIRST to avoid ReferenceError/TDZ) ---
 
@@ -34,45 +206,40 @@ export default function LiveChat() {
     // Extract the actual phone number from remoteJid format
     const normalizePhone = (remoteJid) => {
         if (!remoteJid) return '';
-        
+
         // Format: "628xxxxxx@s.whatsapp.net" or "628xxxxxx@lid" or "628xxx:45@lid"
         // Extract before @ symbol
         const beforeAt = String(remoteJid).split('@')[0];
-        
+
         // Extract before : symbol (for LID format)
         const beforeColon = beforeAt.split(':')[0];
-        
+
         // Remove all non-digits
         let phoneNumber = beforeColon.replace(/\D/g, '');
-        
+
         // Convert 0xxx to 62xxx
         if (phoneNumber.startsWith('0')) {
             phoneNumber = '62' + phoneNumber.substring(1);
         }
-        
+
         // Return the phone number (or original if extraction failed)
         return phoneNumber || remoteJid;
     };
 
     const scrollToBottom = () => {
-        setTimeout(() => {
-            messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-        }, 100);
+        // Use 'auto' behavior for instant jump as requested
+        messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
     };
 
     const fetchConversations = useCallback(async () => {
         try {
             const { data } = await axios.get('/chats');
-            console.log('📞 Raw response:', data);
+
             if (data.success) {
-                console.log('📞 Conversations from backend:', data.data.map(c => ({
-                    _id: c._id,
-                    displayName: c.displayName,
-                    remoteJids: c.remoteJids
-                })));
+
                 setConversations(data.data);
             } else {
-                console.error('❌ Response not success:', data);
+
             }
         } catch (err) {
             console.error('Failed to fetch chats', err);
@@ -92,6 +259,52 @@ export default function LiveChat() {
             console.error('Failed to mark read', err);
         }
     }, []);
+
+    const fetchCustomers = useCallback(async () => {
+        try {
+            const { data } = await axios.get('/customers');
+            if (data.success) {
+                setCustomers(data.data);
+            }
+        } catch (error) {
+            console.error('Failed to fetch customers for tags', error);
+        }
+    }, []);
+
+    // Helper to get tags for a chat
+    const getTagsForChat = (chat) => {
+        if (!chat || !customers.length) return [];
+        // Chat ID usually contains phone number
+        const chatPhone = normalizePhone(chat._id);
+
+        // Find customer with matching phone
+        const customer = customers.find(c => {
+            // Basic match (backend should ensure uniqueness)
+            return c.phone === chatPhone || (c.phone && chatPhone.endsWith(c.phone));
+        });
+
+        return customer ? (customer.tags || []) : [];
+    };
+
+    const getCustomerIdForChat = (chat) => {
+        if (!chat || !customers.length) return null;
+        const chatPhone = normalizePhone(chat._id);
+        const customer = customers.find(c => {
+            return c.phone === chatPhone || (c.phone && chatPhone.endsWith(c.phone));
+        });
+        return customer ? customer._id : null;
+    };
+
+    const handleTagsUpdated = (newTags) => {
+        if (!selectedChat) return;
+
+        const customerId = getCustomerIdForChat(selectedChat);
+        if (customerId) {
+            setCustomers(prev => prev.map(c =>
+                c._id === customerId ? { ...c, tags: newTags } : c
+            ));
+        }
+    };
 
     // --- 2. EFFECTS (Defined AFTER helpers) ---
 
@@ -120,9 +333,10 @@ export default function LiveChat() {
             setConversations(prev => {
                 const newList = [...prev];
                 // Match by ID OR by phone digits for robust deduplication
+                // incomingMsg.remoteJid usually includes suffix (@s.whatsapp.net), but c._id might be just phone
                 const index = newList.findIndex(c =>
                     c._id === incomingMsg.remoteJid ||
-                    (c._id.replace(/\D/g, '') === incomingPhone)
+                    normalizePhone(c._id) === normalizePhone(incomingMsg.remoteJid)
                 );
 
                 if (index !== -1) {
@@ -144,21 +358,18 @@ export default function LiveChat() {
             });
 
             // If chat is open, handle message list
-            if (selectedChat?._id === incomingMsg.remoteJid) {
+            if (selectedChat && normalizePhone(selectedChat._id) === normalizePhone(incomingMsg.remoteJid)) {
                 setMessages(prev => {
                     // 1. Robust Deduplication
-                    // Check against Mongo ID AND Baileys Message ID (msgId)
-                    // The backend sends 'msgId' which corresponds to the Baileys key.id
                     const exists = prev.some(m =>
                         m._id === incomingMsg._id ||
-                        m._id === incomingMsg.msgId ||
+                        m.msgId === incomingMsg.msgId ||
                         (m.key && m.key.id === incomingMsg.msgId)
                     );
 
                     if (exists) return prev;
 
-                    // 2. Aggressive Fuzzy Match for "Pending" (Optimistic) messages
-                    // Use content & fromMe status. Ignore timestamp diffs.
+                    // 2. Optimistic Update Replacement
                     const pendingIndex = prev.findIndex(m =>
                         m.status === 'pending' &&
                         m.content === incomingMsg.content &&
@@ -166,22 +377,31 @@ export default function LiveChat() {
                     );
 
                     if (pendingIndex !== -1) {
-                        // Replace pending message with confirmed real message
                         const newMessages = [...prev];
                         newMessages[pendingIndex] = incomingMsg;
                         return newMessages;
                     }
 
-                    // 3. If no duplicate found, append
                     setTimeout(scrollToBottom, 50);
 
-                    // If message is incoming (not from me), mark it as read immediately
                     if (!incomingMsg.fromMe) {
                         markAsRead(selectedChat._id);
                     }
                     return [...prev, incomingMsg];
                 });
             }
+        });
+
+        socketRef.current.on('message_status_update', (data) => {
+            console.log('✅ Status Update:', data);
+            setMessages(prev => prev.map(m => {
+                // Match by msgId (DB field) or key.id (Baileys object structure)
+                if (m.msgId === data.messageId || (m.key && m.key.id === data.messageId)) {
+                    // Update status locally
+                    return { ...m, status: data.status };
+                }
+                return m;
+            }));
         });
 
         socketRef.current.on('message_revoked', (data) => {
@@ -202,7 +422,39 @@ export default function LiveChat() {
     // Initial Fetch
     useEffect(() => {
         fetchConversations();
-    }, [fetchConversations]);
+        fetchCustomers();
+    }, [fetchConversations, fetchCustomers]);
+
+    // Handle "Start Chat" from Customers Page
+    const location = useLocation();
+    useEffect(() => {
+        if (location.state?.startChat && !isLoadingChats) {
+            const customer = location.state.startChat;
+            const targetPhone = normalizePhone(customer.phone);
+
+            // 1. Try to find existing conversation
+            const existingChat = conversations.find(c =>
+                normalizePhone(c._id) === targetPhone
+            );
+
+            if (existingChat) {
+                setSelectedChat(existingChat);
+            } else {
+                // 2. If not found, create a temporary chat object to open the window
+                const newJid = targetPhone + '@s.whatsapp.net';
+                setSelectedChat({
+                    _id: newJid,
+                    remoteJid: newJid,
+                    displayName: customer.name,
+                    unreadCount: 0,
+                    lastMessage: null,
+                    isTemporary: true // Marker
+                });
+            }
+            // Clear state so it doesn't re-trigger on refresh
+            window.history.replaceState({}, document.title);
+        }
+    }, [location.state, conversations, isLoadingChats]);
 
     // Fetch Messages when chat selected
     useEffect(() => {
@@ -219,7 +471,8 @@ export default function LiveChat() {
                 const { data } = await axios.get(`/chats/${selectedChat._id}?limit=100`);
                 if (data.success) {
                     setMessages(data.data);
-                    scrollToBottom();
+                    // Force scroll nicely
+                    setTimeout(() => scrollToBottom(), 100);
                 }
             } catch (err) {
                 console.error('Failed to fetch messages', err);
@@ -232,6 +485,11 @@ export default function LiveChat() {
         fetchMessages();
     }, [selectedChat, markAsRead]);
 
+    // Auto-scroll on new messages
+    useEffect(() => {
+        scrollToBottom();
+    }, [messages]);
+
     // --- 3. EVENT HANDLERS ---
 
     const handleDeleteChat = () => {
@@ -241,7 +499,7 @@ export default function LiveChat() {
 
     const confirmDeleteChat = async () => {
         if (!selectedChat) return;
-        
+
         try {
             setIsDeletingChat(true);
             await axios.delete(`/chats/${selectedChat._id}`);
@@ -256,6 +514,106 @@ export default function LiveChat() {
         } finally {
             setIsDeletingChat(false);
         }
+    };
+
+    const handleSaveContactClick = () => {
+        let defaultName = selectedChat.displayName;
+        if (defaultName === 'Unknown Contact') {
+            defaultName = selectedChat.lastMessage?.pushName || '';
+        }
+        setSaveContactName(defaultName);
+        const contactPhone = selectedChat.cleanPhone || normalizePhone(selectedChat._id);
+        setSaveContactPhone(contactPhone ? `+${contactPhone}` : selectedChat._id.split('@')[0]);
+        setSaveContactTags([]); // Reset tags
+        setSaveContactTagInput('');
+        setIsSaveContactModalOpen(true);
+    };
+
+    const handleSaveContactConfirm = async () => {
+        // Remove + and spaces from editable phone
+        const phone = saveContactPhone.replace(/\D/g, '');
+        if (!phone) {
+            toast.error('Nomor tidak valid');
+            return;
+        }
+
+        try {
+            // Determine JID to link
+            const jidToLink = selectedChat._id;
+
+            await axios.post('/customers', {
+                name: saveContactName.trim(),
+                phone,
+                jid: jidToLink,
+                tags: saveContactTags
+            });
+
+            toast.success(`Kontak ${saveContactName} berhasil disimpan!`);
+            setIsSaveContactModalOpen(false);
+            fetchConversations();
+        } catch (err) {
+            toast.error(err.response?.data?.message || 'Gagal menyimpan kontak');
+        }
+    };
+
+    const handleStartNewChat = async () => {
+        if (!newChatPhone.trim()) {
+            toast.error('Masukkan nomor telepon');
+            return;
+        }
+
+        // Normalize
+        let phone = newChatPhone.replace(/\D/g, '');
+        if (phone.startsWith('0')) phone = '62' + phone.substring(1);
+        if (phone.startsWith('8')) phone = '62' + phone;
+
+        if (phone.length < 10) {
+            toast.error('Nomor telepon tidak valid');
+            return;
+        }
+
+        const jid = phone + '@s.whatsapp.net';
+
+        // AUTO-SAVE LOGIC
+        if (newChatName.trim()) {
+            try {
+                await axios.post('/customers', {
+                    name: newChatName.trim(),
+                    phone: phone,
+                    jid: jid
+                });
+                toast.success('Kontak tersimpan otomatis via New Chat');
+            } catch (err) {
+                // Ignore error (maybe duplicate, just proceed to chat)
+                console.log('Auto-save skipped/failed', err);
+            }
+        }
+
+        const displayTitle = newChatName.trim() || `+${phone}`;
+
+        // Check if exists
+        const existing = conversations.find(c => c._id === jid);
+        if (existing) {
+            // Update name in local view if newly saved
+            if (newChatName.trim()) existing.displayName = newChatName.trim();
+            setSelectedChat(existing);
+        } else {
+            // Create temp
+            const newChat = {
+                _id: jid,
+                displayName: displayTitle,
+                cleanPhone: phone,
+                lastMessage: null,
+                unreadCount: 0,
+                allMessages: []
+            };
+            setConversations(prev => [newChat, ...prev]);
+            setSelectedChat(newChat);
+        }
+
+        setIsNewChatModalOpen(false);
+        setNewChatPhone('');
+        setNewChatName('');
     };
 
     const handleSendMessage = async (e) => {
@@ -312,7 +670,7 @@ export default function LiveChat() {
     const filteredChats = conversations.filter(c => {
         // Skip if _id is null or invalid
         if (!c._id) return false;
-        
+
         const query = searchQuery.toLowerCase();
         const displayName = (c.displayName || c.lastMessage?.pushName || '').toLowerCase();
         const phoneNumber = String(c._id).toLowerCase();
@@ -337,7 +695,7 @@ export default function LiveChat() {
         <div className="flex h-[calc(100vh-80px)] overflow-hidden bg-gray-50 font-roboto">
 
             {/* LEFT: Chat List */}
-            <div className={`w-full md:w-[380px] bg-white border-r border-gray-200 flex flex-col ${selectedChat ? 'hidden md:flex' : 'flex'}`}>
+            <div className={`w-full md:w-[380px] bg-white dark:bg-[#111b21] border-r border-gray-200 dark:border-gray-700 flex flex-col ${selectedChat ? 'hidden md:flex' : 'flex'}`}>
 
                 {/* Header */}
                 <div className="p-4 bg-navy-900 flex flex-col gap-4">
@@ -346,8 +704,17 @@ export default function LiveChat() {
                             <MessageSquare className="w-6 h-6 text-primary-400" />
                             Live Chat
                         </h2>
-                        <div className="w-8 h-8 rounded-full bg-navy-700 flex items-center justify-center text-primary-400 font-bold border border-navy-600">
-                            ME
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={() => setIsNewChatModalOpen(true)}
+                                className="w-8 h-8 rounded-full bg-primary-500 hover:bg-primary-600 flex items-center justify-center text-white transition-colors"
+                                title="Mulai Chat Baru"
+                            >
+                                <Plus className="w-5 h-5" />
+                            </button>
+                            <div className="w-8 h-8 rounded-full bg-navy-700 flex items-center justify-center text-primary-400 font-bold border border-navy-600">
+                                ME
+                            </div>
                         </div>
                     </div>
 
@@ -381,10 +748,10 @@ export default function LiveChat() {
                         </div>
                     ) : filteredChats.length === 0 ? (
                         <div className="flex flex-col items-center justify-center h-40 gap-3 text-center px-6">
-                            <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center text-gray-400">
+                            <div className="w-12 h-12 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center text-gray-400">
                                 <MessageSquare className="w-6 h-6" />
                             </div>
-                            <p className="text-gray-500 text-sm">Belum ada percakapan.<br />Pesan baru akan muncul di sini.</p>
+                            <p className="text-gray-500 dark:text-gray-400 text-sm">Belum ada percakapan.<br />Pesan baru akan muncul di sini.</p>
                         </div>
                     ) : (
                         filteredChats.map(chat => {
@@ -395,7 +762,8 @@ export default function LiveChat() {
                             const displayName = chat.displayName || 'Unknown Contact';
                             // Di chat list, tampilkan hanya nama saja (tanpa nomor)
                             const name = displayName;
-                            const lastMsg = chat.lastMessage?.content || '[Media]';
+                            const rawContent = chat.lastMessage?.content || '';
+                            const lastMsg = rawContent === '[documentMessage]' ? '[Dokumen]' : rawContent === '[stickerMessage]' ? '[Sticker]' : (rawContent || '[Media]');
                             const time = chat.lastMessage?.timestamp ? new Date(chat.lastMessage?.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
                             const unread = chat.unreadCount > 0;
 
@@ -403,26 +771,46 @@ export default function LiveChat() {
                                 <div
                                     key={chat._id}
                                     onClick={() => setSelectedChat(chat)}
-                                    className={`p-4 flex gap-3 cursor-pointer transition-colors border-b border-gray-50 hover:bg-gray-50
-                                ${isActive ? 'bg-primary-50/50 border-r-4 border-r-primary-500' : ''}
+                                    className={`p-4 flex gap-3 cursor-pointer transition-colors border-b border-gray-50 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-[#202c33]
+                                ${isActive ? 'bg-primary-50/50 dark:bg-[#2a3942] border-r-4 border-r-primary-500' : ''}
                             `}
                                 >
                                     {/* Avatar */}
-                                    <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-navy-600 to-navy-500 flex-shrink-0 flex items-center justify-center text-white font-bold text-lg shadow-sm border border-navy-400/20">
-                                        {name[0]?.toUpperCase()}
-                                    </div>
+                                    <ChatAvatar chat={chat} className="w-12 h-12" />
 
-                                    <div className="flex-1 min-w-0 flex flex-col justify-center">
-                                        <div className="flex justify-between items-center mb-0.5">
-                                            <h3 className={`font-semibold truncate text-[15px] ${isActive ? 'text-navy-900' : 'text-gray-900'}`}>
-                                                {name}
-                                            </h3>
-                                            <span className={`text-[11px] font-medium flex-shrink-0 ${unread ? 'text-primary-600' : 'text-gray-400'}`}>
+                                    <div className="flex-1 min-w-0">
+                                        <div className="flex justify-between items-start mb-0.5">
+                                            <div className="flex flex-col gap-0.5 min-w-0">
+                                                <div className="flex items-center gap-2">
+                                                    <h3 className={`font-semibold truncate text-[15px] ${isActive ? 'text-navy-900 dark:text-white' : 'text-gray-900 dark:text-gray-100'} ${unread ? 'font-bold' : ''}`}>
+                                                        {name}
+                                                    </h3>
+                                                    {/* Tags inline with name */}
+                                                    <div className="flex gap-1 shrink-0">
+                                                        {getTagsForChat(chat).slice(0, 3).map((tag, i) => {
+                                                            const lowerTag = tag.toLowerCase();
+                                                            let colorClass = "bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400";
+                                                            if (lowerTag === 'royal') colorClass = "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300";
+                                                            if (lowerTag === 'gold') colorClass = "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300";
+                                                            if (lowerTag === 'platinum') colorClass = "bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300";
+                                                            if (lowerTag === 'vip') colorClass = "bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300";
+
+                                                            return (
+                                                                <span key={i} className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase ${colorClass}`}>
+                                                                    {tag}
+                                                                </span>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <span className={`text-[11px] font-medium flex-shrink-0 ${unread ? 'text-primary-600' : 'text-gray-400 dark:text-gray-500'}`}>
                                                 {time}
                                             </span>
                                         </div>
+
                                         <div className="flex justify-between items-center">
-                                            <p className={`text-[13px] truncate max-w-[90%] ${unread ? 'font-semibold text-gray-800' : 'text-gray-500'}`}>
+                                            <p className={`text-[13px] truncate max-w-[90%] ${unread ? 'font-semibold text-gray-800 dark:text-gray-200' : 'text-gray-500 dark:text-gray-400'}`}>
                                                 {chat.lastMessage?.fromMe && <span className="text-gray-400 mr-1">Anda:</span>}
                                                 {lastMsg}
                                             </p>
@@ -451,48 +839,55 @@ export default function LiveChat() {
                 {selectedChat ? (
                     <>
                         {/* Chat Header */}
-                        <div className="h-16 px-4 bg-white border-b border-gray-200 flex items-center justify-between shadow-sm z-10">
+                        <div className="h-16 px-4 bg-white dark:bg-[#202c33] border-b border-gray-200 dark:border-gray-700 flex items-center justify-between shadow-sm z-10">
                             <div className="flex items-center gap-3">
-                                <button onClick={() => setSelectedChat(null)} className="md:hidden p-2 -ml-2 hover:bg-gray-100 rounded-full text-gray-600">
+                                <button onClick={() => setSelectedChat(null)} className="md:hidden p-2 -ml-2 hover:bg-gray-100 dark:hover:bg-[#2a3942] rounded-full text-gray-600 dark:text-gray-300">
                                     <ArrowLeft className="w-5 h-5" />
                                 </button>
 
-                                <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-navy-600 to-navy-500 flex items-center justify-center text-white font-bold text-sm">
-                                    {(selectedChat.displayName || (!selectedChat.lastMessage?.fromMe && selectedChat.lastMessage?.pushName) || selectedChat._id)[0].toUpperCase()}
-                                </div>
+                                <ChatAvatar chat={selectedChat} className="w-9 h-9" />
 
-                                <div className="flex flex-col">
-                                    <h3 className="font-bold text-navy-900 text-sm leading-tight">
-                                        {selectedChat.displayName || 'Unknown Contact'}
-                                    </h3>
-                                    <p className="text-xs text-green-600 font-medium">
+                                <div className="flex flex-col justify-center">
+                                    <div className="flex items-center gap-2">
+                                        <h3 className="font-bold text-navy-900 dark:text-white text-sm leading-tight truncate max-w-[150px] md:max-w-xs">
+                                            {selectedChat.displayName || 'Unknown Contact'}
+                                        </h3>
+                                        {/* Header Tags */}
+                                        <div className="flex gap-1 shrink-0">
+                                            {getTagsForChat(selectedChat).map((tag, i) => {
+                                                const lowerTag = tag.toLowerCase();
+                                                let colorClass = "bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400";
+                                                if (lowerTag === 'royal') colorClass = "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300";
+                                                if (lowerTag === 'gold') colorClass = "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300";
+                                                if (lowerTag === 'platinum') colorClass = "bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300";
+                                                if (lowerTag === 'vip') colorClass = "bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300";
+
+                                                return (
+                                                    <span key={i} className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase ${colorClass}`}>
+                                                        {tag}
+                                                    </span>
+                                                );
+                                            })}
+                                        </div>
+                                        {/* Edit Tags Button */}
+                                        <button
+                                            onClick={() => setIsTagModalOpen(true)}
+                                            className="p-2 ml-1 text-gray-400 hover:text-primary-500 hover:bg-primary-50 rounded-full transition-colors"
+                                            title="Manage Tags"
+                                        >
+                                            <Edit className="w-4 h-4" />
+                                        </button>
+                                    </div>
+                                    <p className="text-xs text-green-600 font-medium truncate">
                                         {selectedChat.cleanPhone ? `+${selectedChat.cleanPhone}` : '(Nomor tidak tersedia)'}
                                     </p>
                                 </div>
 
                                 {/* QUICK SAVE TO CUSTOMER */}
-                                {selectedChat && !selectedChat.displayName?.includes('(') && (
+                                {selectedChat && !selectedChat.isSaved && !selectedChat.displayName?.includes('(') && (
                                     <button
-                                        onClick={async () => {
-                                            try {
-                                                // Gunakan cleanPhone dari backend (sudah normalized)
-                                                const phone = selectedChat.cleanPhone || normalizePhone(selectedChat._id);
-                                                const name = selectedChat.displayName || selectedChat.lastMessage?.pushName || `User ${phone}`;
-                                                
-                                                // Jika phone tidak valid (null), jangan save
-                                                if (!phone) {
-                                                    toast.error('Nomor tidak valid - tidak bisa disimpan');
-                                                    return;
-                                                }
-                                                
-                                                await axios.post('/customers', { name, phone });
-                                                toast.success('Kontak disimpan ke Customers!');
-                                                fetchConversations(); // Refresh names
-                                            } catch (err) {
-                                                toast.error(err.response?.data?.message || 'Gagal menyimpan kontak');
-                                            }
-                                        }}
-                                        className="ml-2 px-3 py-1 bg-primary-100 text-primary-700 text-[10px] font-bold rounded-full border border-primary-200 hover:bg-primary-500 hover:text-white transition-all flex items-center gap-1 shadow-sm"
+                                        onClick={handleSaveContactClick}
+                                        className="hidden md:flex ml-2 px-3 py-1 bg-primary-100 text-primary-700 text-[10px] font-bold rounded-full border border-primary-200 hover:bg-primary-500 hover:text-white transition-all items-center gap-1 shadow-sm"
                                         title="Simpan sebagai Customer"
                                     >
                                         <UserPlus className="w-3 h-3" />
@@ -501,14 +896,16 @@ export default function LiveChat() {
                                 )}
                             </div>
 
-                            <div className="flex items-center gap-2 text-gray-500 relative" ref={menuRef}>
+
+
+                            <div className="flex items-center gap-2 text-gray-500 dark:text-gray-400 relative" ref={menuRef}>
                                 {isMessageSearchOpen ? (
-                                    <div className="flex items-center bg-gray-100 rounded-full px-3 py-1 animate-in fade-in slide-in-from-right-2 duration-200">
+                                    <div className="flex items-center bg-gray-100 dark:bg-[#2a3942] rounded-full px-3 py-1 animate-in fade-in slide-in-from-right-2 duration-200">
                                         <input
                                             autoFocus
                                             type="text"
                                             placeholder="Cari pesan..."
-                                            className="bg-transparent border-none focus:ring-0 text-xs w-32 md:w-48 text-gray-700"
+                                            className="bg-transparent border-none focus:ring-0 text-xs w-32 md:w-48 text-gray-700 dark:text-gray-200"
                                             value={messageSearchQuery}
                                             onChange={e => setMessageSearchQuery(e.target.value)}
                                         />
@@ -517,7 +914,7 @@ export default function LiveChat() {
                                                 setIsMessageSearchOpen(false);
                                                 setMessageSearchQuery('');
                                             }}
-                                            className="p-1 hover:bg-gray-200 rounded-full"
+                                            className="p-1 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-full"
                                         >
                                             <X className="w-3.5 h-3.5" />
                                         </button>
@@ -525,14 +922,14 @@ export default function LiveChat() {
                                 ) : (
                                     <button
                                         onClick={() => setIsMessageSearchOpen(true)}
-                                        className="p-2 hover:bg-gray-100 rounded-full"
+                                        className="p-2 hover:bg-gray-100 dark:hover:bg-[#2a3942] rounded-full"
                                         title="Cari di chat"
                                     >
                                         <Search className="w-5 h-5" />
                                     </button>
                                 )}
                                 <button
-                                    className="p-2 hover:bg-gray-100 rounded-full"
+                                    className="p-2 hover:bg-gray-100 dark:hover:bg-[#2a3942] rounded-full"
                                     title="Opsi Lain"
                                     onClick={() => setShowMenu(!showMenu)}
                                 >
@@ -541,10 +938,10 @@ export default function LiveChat() {
 
                                 {/* Dropdown Menu */}
                                 {showMenu && (
-                                    <div className="absolute right-0 top-12 w-48 bg-white rounded-lg shadow-xl border border-gray-100 py-1 z-50">
+                                    <div className="absolute right-0 top-12 w-48 bg-white dark:bg-[#202c33] rounded-lg shadow-xl border border-gray-100 dark:border-gray-700 py-1 z-50">
                                         <button
                                             onClick={handleDeleteChat}
-                                            className="w-full text-left px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+                                            className="w-full text-left px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2"
                                         >
                                             <Trash2 className="w-4 h-4" />
                                             Hapus Chat
@@ -555,7 +952,7 @@ export default function LiveChat() {
                         </div>
 
                         {/* Messages Area */}
-                        <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-3 z-0 custom-scrollbar">
+                        <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-3 z-0 custom-scrollbar bg-[#efeae2] dark:bg-[#0b141a]">
                             {filteredMessages.length === 0 && messageSearchQuery ? (
                                 <div className="flex flex-col items-center justify-center h-full text-gray-400">
                                     <Search className="w-12 h-12 mb-2 opacity-20" />
@@ -564,36 +961,131 @@ export default function LiveChat() {
                             ) : filteredMessages.map((msg, idx) => (
                                 <div key={idx} className={`flex ${msg.fromMe ? 'justify-end' : 'justify-start'}`}>
                                     <div className={`
-                                max-w-[80%] md:max-w-[65%] px-3 py-2 rounded-lg shadow-sm text-sm relative group
-                                ${msg.fromMe
-                                            ? 'bg-primary-500 text-white rounded-tr-none'
-                                            : 'bg-white text-gray-800 rounded-tl-none'}
+                                relative group text-[14.2px] leading-[19px]
+                                ${(msg.messageType === 'sticker' || msg.content === '[Sticker]')
+                                            ? 'bg-transparent shadow-none p-0'
+                                            : `shadow-[0_1px_0.5px_rgba(11,20,26,0.13)] ${msg.mediaUrl ? 'p-1 rounded-xl max-w-[330px]' : 'px-3 py-1.5 rounded-lg max-w-[85%] md:max-w-[65%]'} 
+                                            ${msg.fromMe ? 'bg-[#d9fdd3] dark:bg-[#005c4b] rounded-tr-none' : 'bg-white dark:bg-[#202c33] rounded-tl-none'}
+                                            ${msg.content && msg.content.includes('[AI]') ? 'border-l-4 border-l-purple-500 bg-[#f3e5f5] dark:bg-[#4a148c]/20' : ''}`}
+                                text-[#111b21] dark:text-[#e9edef]
                             `}>
-                                        {/* Handle image messages */}
-                                        {msg.content === '[Image]' || msg.messageType === 'image' ? (
-                                            <div className="bg-gray-200 rounded w-48 h-48 flex items-center justify-center text-gray-500 mb-2">
-                                                <span className="text-xs">📸 Image</span>
+                                        {/* HANDLING MEDIA */}
+                                        {msg.mediaUrl ? (
+                                            <div className="relative overflow-hidden rounded-lg">
+                                                {(msg.messageType === 'sticker' || (msg.content === '[Sticker]' && msg.mediaUrl)) ? (
+                                                    <div className="relative">
+                                                        <img
+                                                            src={`${API_URL.replace('/api', '')}${msg.mediaUrl}`}
+                                                            alt="Sticker"
+                                                            className="w-32 h-32 object-contain cursor-pointer transition-transform hover:scale-105"
+                                                            onClick={() => setSelectedImage(`${API_URL.replace('/api', '')}${msg.mediaUrl}`)}
+                                                        />
+                                                    </div>
+                                                ) : msg.mediaType?.startsWith('image/') ? (
+                                                    <div className="relative">
+                                                        <img
+                                                            src={`${API_URL.replace('/api', '')}${msg.mediaUrl}`}
+                                                            alt="Sent Media"
+                                                            className="w-full h-auto max-h-[400px] object-cover rounded-lg cursor-pointer hover:opacity-95 transition-opacity"
+                                                            onClick={() => setSelectedImage(`${API_URL.replace('/api', '')}${msg.mediaUrl}`)}
+                                                        />
+                                                        {/* Timestamp Overlay for Images */}
+                                                        {(!msg.content || msg.content === '[Image]') && (
+                                                            <div className="absolute bottom-0 right-0 w-full p-1.5 bg-gradient-to-t from-black/50 to-transparent flex justify-end items-center gap-1 rounded-b-lg">
+                                                                <span className="text-[11px] text-white/90">
+                                                                    {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}
+                                                                </span>
+                                                                {msg.fromMe && (
+                                                                    <CheckCheck size={15} className={`text-white/90 ${msg.status === 'read' ? 'text-blue-300' : ''}`} strokeWidth={1.5} />
+                                                                )}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                ) : msg.mediaType?.startsWith('video/') ? (
+                                                    <video
+                                                        controls
+                                                        className="w-full h-auto max-h-[400px] bg-black/5 rounded-lg"
+                                                        src={`${API_URL.replace('/api', '')}${msg.mediaUrl}`}
+                                                    />
+                                                ) : msg.mediaType?.startsWith('audio/') ? (
+                                                    <audio
+                                                        controls
+                                                        className="w-full min-w-[250px] h-10 mt-1"
+                                                        src={`${API_URL.replace('/api', '')}${msg.mediaUrl}`}
+                                                    />
+                                                ) : (
+                                                    <a
+                                                        href={`${API_URL.replace('/api', '')}${msg.mediaUrl}`}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        className="flex items-center gap-3 bg-gray-50/50 p-3 rounded-lg border border-gray-100 hover:bg-gray-100 transition-colors"
+                                                    >
+                                                        <div className="p-2 bg-white rounded-full shadow-sm text-blue-600">
+                                                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" /><polyline points="14 2 14 8 20 8" /></svg>
+                                                        </div>
+                                                        <div className="flex flex-col overflow-hidden">
+                                                            <span className="text-sm font-medium text-gray-700 truncate">
+                                                                File Attachment
+                                                            </span>
+                                                            <span className="text-xs text-blue-500 underline truncate max-w-[150px]">
+                                                                Click to Download
+                                                            </span>
+                                                        </div>
+                                                    </a>
+                                                )}
+                                            </div>
+                                        ) : (msg.content === '[Image]' || msg.messageType === 'image') ? (
+                                            <div className="bg-gray-100 rounded-lg w-full h-48 flex flex-col items-center justify-center text-gray-400 mb-2 border-2 border-dashed border-gray-200">
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mb-2"><rect width="18" height="18" x="3" y="3" rx="2" ry="2" /><circle cx="9" cy="9" r="2" /><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" /></svg>
+                                                <span className="text-xs font-medium">Image Placeholder</span>
                                             </div>
                                         ) : null}
-                                        
-                                        <p className="leading-relaxed whitespace-pre-wrap break-words">{msg.content}</p>
 
-                                        <div className={`
-                                    text-[10px] mt-1 flex items-center justify-end gap-1 select-none
-                                    ${msg.fromMe ? 'text-primary-100' : 'text-gray-400'}
-                                `}>
-                                            {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                            {msg.fromMe && (
-                                                <CheckCheck className={`w-3 h-3 ${msg.status === 'read' ? 'text-blue-300' : 'opacity-70'}`} />
-                                            )}
-                                        </div>
+                                        {/* QUOTED MESSAGE BLOCK */}
+                                        {msg.quotedMsg && (
+                                            <div className={`mb-1 rounded-[5px] overflow-hidden border-l-[4px] bg-black/5 dark:bg-black/20 p-1.5 cursor-pointer flex flex-col ${msg.fromMe ? 'border-[#069986] bg-[#cfe9ba] dark:bg-[#025144]' : 'border-[#917c9e] bg-[#f5f6f6] dark:bg-[#1f2c33]'}`}>
+                                                <span className={`text-[11.5px] font-bold mb-0.5 ${msg.fromMe ? 'text-[#046a5d] dark:text-[#00a884]' : 'text-[#6e587b] dark:text-[#d1d7db]'}`}>
+                                                    {msg.quotedMsg.participant?.split('@')[0] || 'User'}
+                                                </span>
+                                                <p className="text-[12px] text-gray-600 dark:text-gray-300 line-clamp-2 leading-tight">
+                                                    {msg.quotedMsg.content}
+                                                </p>
+                                            </div>
+                                        )}
 
-                                        <div className={`
-                                    absolute top-0 w-3 h-3
-                                    ${msg.fromMe
-                                                ? '-right-1.5 bg-primary-500 [clip-path:polygon(0_0,0%_100%,100%_0)]'
-                                                : '-left-1.5 bg-white [clip-path:polygon(0_0,100%_0,100%_100%)]'}
-                                `} />
+                                        {/* TEXT CONTENT (If exists and not just [Image]) */}
+                                        {(!msg.mediaUrl || (msg.content && !msg.content.includes('[Image]') && !msg.content.includes('[Video]') && !msg.content.includes('[audioMessage]') && !msg.content.includes('[documentMessage]') && !msg.content.includes('[stickerMessage]') && !msg.content.includes('[Sticker]'))) && (
+                                            <div className={`${msg.mediaUrl ? 'px-2 pb-1 pt-1' : 'px-2 py-1 relative'}`}>
+                                                {/* Message Text with "Read More" like behavior if needed */}
+                                                <div className="text-[14.2px] text-[#111b21] dark:text-[#e9edef] leading-[19px] whitespace-pre-wrap break-words">
+                                                    {msg.content}
+
+                                                    {/* Metadata/Timestamp Container - Uses float to sit at bottom right */}
+                                                    <span className="inline-block align-bottom h-[15px] w-[60px]"></span> {/* Spacer to prevent overlap */}
+                                                    <div className="float-right -mt-[6px] ml-2 flex items-center gap-1 h-[15px] select-none">
+                                                        <span className="text-[11px] text-[hsla(0,0%,7%,0.45)] dark:text-[hsla(0,0%,100%,0.45)] relative top-[3px]">
+                                                            {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}
+                                                        </span>
+                                                        {msg.fromMe && (
+                                                            <span className={`relative top-[3px] ${msg.status === 'read' ? 'text-[#53bdeb]' : 'text-gray-400'}`}>
+                                                                {/* 
+                                                                    1. Single Grey Tick: Sent / Pending (Offline)
+                                                                    2. Double Grey Tick: Delivered (Online but not read)
+                                                                    3. Double Blue Tick: Read
+                                                                */}
+                                                                {(msg.status === 'read') ? (
+                                                                    <CheckCheck size={16} strokeWidth={1.5} />
+                                                                ) : (msg.status === 'delivered') ? (
+                                                                    <CheckCheck size={16} strokeWidth={1.5} />
+                                                                ) : (
+                                                                    <Check size={16} strokeWidth={1.5} />
+                                                                )}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                             ))}
@@ -601,35 +1093,132 @@ export default function LiveChat() {
                         </div>
 
                         {/* Input Area */}
-                        <div className="p-3 md:p-4 bg-gray-50 border-t border-gray-200 z-10">
-                            <form onSubmit={handleSendMessage} className="max-w-4xl mx-auto flex items-end gap-2">
+                        <div className="px-2 py-2 md:px-4 md:py-3 bg-[#f0f2f5] border-t border-gray-200 z-10 w-full">
+                            <div className="max-w-4xl mx-auto flex items-end gap-2 relative">
 
-                                <div className="flex-1 bg-white border border-gray-300 rounded-2xl flex items-center shadow-sm focus-within:ring-2 focus-within:ring-primary-500/20 focus-within:border-primary-500 transition-all">
-                                    <textarea
-                                        rows={1}
-                                        value={inputText}
-                                        onChange={e => setInputText(e.target.value)}
-                                        onKeyDown={e => {
-                                            if (e.key === 'Enter' && !e.shiftKey) {
-                                                e.preventDefault();
-                                                handleSendMessage(e);
-                                            }
-                                        }}
-                                        placeholder="Ketik pesan..."
-                                        className="w-full px-4 py-3 bg-transparent border-none focus:ring-0 text-sm resize-none max-h-32 text-gray-800 placeholder-gray-400"
-                                        style={{ minHeight: '44px' }}
+                                {/* ATTACHMENT BUTTON & MENU */}
+                                <div className="relative pb-1">
+                                    {showAttachMenu && (
+                                        <div className="absolute bottom-14 left-0 mb-2 flex flex-col gap-3 bg-white p-4 rounded-xl shadow-[0_4px_20px_rgba(0,0,0,0.1)] animate-in slide-in-from-bottom-2 fade-in duration-200 min-w-[160px] z-50">
+                                            <button onClick={() => triggerFileUpload('image')} className="flex items-center gap-3 hover:bg-gray-50 p-2 rounded-lg transition-colors text-gray-700 group">
+                                                <div className="p-2 bg-purple-100 group-hover:bg-purple-200 text-purple-600 rounded-full transition-colors">
+                                                    <ImageIcon size={20} />
+                                                </div>
+                                                <span className="text-sm font-medium">Foto & Video</span>
+                                            </button>
+                                            <button onClick={() => triggerFileUpload('video')} className="flex items-center gap-3 hover:bg-gray-50 p-2 rounded-lg transition-colors text-gray-700 group">
+                                                <div className="p-2 bg-pink-100/50 text-pink-600 rounded-full transition-colors">
+                                                    <Video size={20} />
+                                                </div>
+                                                <span className="text-sm font-medium">Video</span>
+                                            </button>
+                                            <button onClick={() => triggerFileUpload('document')} className="flex items-center gap-3 hover:bg-gray-50 p-2 rounded-lg transition-colors text-gray-700 group">
+                                                <div className="p-2 bg-blue-100 group-hover:bg-blue-200 text-blue-600 rounded-full transition-colors">
+                                                    <FileText size={20} />
+                                                </div>
+                                                <span className="text-sm font-medium">Dokumen</span>
+                                            </button>
+                                            <button onClick={() => triggerFileUpload('audio')} className="flex items-center gap-3 hover:bg-gray-50 p-2 rounded-lg transition-colors text-gray-700 group">
+                                                <div className="p-2 bg-orange-100 group-hover:bg-orange-200 text-orange-600 rounded-full transition-colors">
+                                                    <Music size={20} />
+                                                </div>
+                                                <span className="text-sm font-medium">Audio</span>
+                                            </button>
+                                        </div>
+                                    )}
+
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowAttachMenu(!showAttachMenu)}
+                                        className={`p-2 rounded-full transition-all ${showAttachMenu ? 'bg-gray-200 text-gray-600 rotate-45' : 'text-[#54656f] hover:bg-gray-200'}`}
+                                    >
+                                        <div className="flex items-center justify-center">
+                                            {/* Plus Icon Style like WhatsApp */}
+                                            <svg viewBox="0 0 24 24" height="24" width="24" preserveAspectRatio="xMidYMid meet" version="1.1" x="0px" y="0px" enableBackground="new 0 0 24 24"><path fill="currentColor" d="M19,11h-6V5h-2v6H5v2h6v6h2v-6h6V11z"></path></svg>
+                                        </div>
+                                    </button>
+                                    <input
+                                        type="file"
+                                        ref={fileInputRef}
+                                        className="hidden"
+                                        onChange={handleFileSelect}
                                     />
                                 </div>
 
-                                <button
-                                    type="submit"
-                                    disabled={!inputText.trim()}
-                                    className="p-3 bg-navy-900 text-white rounded-full hover:bg-navy-800 disabled:opacity-50 disabled:hover:bg-navy-900 transition-all shadow-md active:scale-95"
-                                >
-                                    <Send className="w-5 h-5" />
-                                </button>
-                            </form>
+                                {/* INPUT FORM OR RECORDER UI */}
+                                {isRecording ? (
+                                    <div className="flex-1 flex items-center justify-between bg-white rounded-lg p-2 px-4 shadow-sm border border-red-100 animate-in fade-in duration-200">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
+                                            <span className="text-red-600 font-mono font-medium text-lg min-w-[50px]">
+                                                {formatDuration(recordingDuration)}
+                                            </span>
+                                            <span className="text-sm text-gray-500">Merekam...</span>
+                                        </div>
+
+                                        <div className="flex items-center gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={cancelRecording}
+                                                className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"
+                                                title="Batal"
+                                            >
+                                                <Trash2 size={20} />
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={stopRecording}
+                                                className="p-2 bg-[#00a884] text-white hover:bg-[#008f6f] rounded-full transition-colors shadow-sm"
+                                                title="Kirim"
+                                            >
+                                                <Send size={18} className="translate-x-0.5" />
+                                            </button>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <form onSubmit={handleSendMessage} className="flex-1 flex items-end gap-2">
+                                        <div className="flex-1 bg-white rounded-lg flex items-center shadow-sm border border-white focus-within:border-white py-1 transition-all">
+                                            <textarea
+                                                rows={1}
+                                                value={inputText}
+                                                onChange={e => setInputText(e.target.value)}
+                                                onKeyDown={e => {
+                                                    if (e.key === 'Enter' && !e.shiftKey) {
+                                                        e.preventDefault();
+                                                        handleSendMessage(e);
+                                                    }
+                                                }}
+                                                placeholder="Ketik pesan"
+                                                className="w-full px-4 py-2 bg-transparent border-none focus:ring-0 text-[15px] resize-none max-h-32 text-[#111b21] placeholder-[#54656f] leading-6"
+                                                style={{ minHeight: '24px', maxHeight: '100px' }}
+                                            />
+                                        </div>
+
+                                        {inputText.trim() ? (
+                                            <button
+                                                type="submit"
+                                                className="p-2.5 bg-[#00a884] text-white rounded-full hover:bg-[#008f6f] transition-all shadow-sm mb-1"
+                                            >
+                                                <svg viewBox="0 0 24 24" height="24" width="24" preserveAspectRatio="xMidYMid meet" version="1.1" x="0px" y="0px" enableBackground="new 0 0 24 24"><path fill="currentColor" d="M1.101,21.757L23.8,12.028L1.101,2.3l0.011,7.912l13.623,1.816L1.112,13.845 L1.101,21.757z"></path></svg>
+                                            </button>
+                                        ) : (
+                                            // Real Voice Recorder Trigger
+                                            <button
+                                                type="button"
+                                                onClick={startRecording}
+                                                className="p-2.5 text-[#54656f] hover:bg-gray-200 rounded-full transition-all mb-1"
+                                                title="Tahan untuk merekam"
+                                            >
+                                                <Mic size={24} />
+                                            </button>
+                                        )}
+                                    </form>
+                                )}
+                            </div>
                         </div>
+
+
+
                     </>
                 ) : (
                     <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
@@ -646,11 +1235,185 @@ export default function LiveChat() {
                             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-navy-900"></span> Secure</span>
                         </div>
                     </div>
-                )}
+                )
+                }
 
-            </div>
+            </div >
+
+            {/* Save Contact Modal */}
+            {
+                isSaveContactModalOpen && (
+                    <div className="fixed inset-0 bg-navy-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
+                        <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200 border border-white/20">
+                            {/* Header */}
+                            <div className="bg-navy-900 px-6 py-5 relative overflow-hidden">
+                                <div className="absolute top-0 right-0 w-24 h-24 bg-primary-500/10 rounded-full blur-2xl -translate-y-1/2 translate-x-1/2"></div>
+                                <div className="flex items-center justify-between relative z-10">
+                                    <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                                        <UserPlus className="w-5 h-5 text-primary-400" />
+                                        Simpan Kontak
+                                    </h3>
+                                    <button
+                                        onClick={() => setIsSaveContactModalOpen(false)}
+                                        className="p-1 hover:bg-white/10 rounded-lg text-gray-400 hover:text-white transition-colors"
+                                    >
+                                        <X className="w-5 h-5" />
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Body */}
+                            <div className="p-6 space-y-5">
+                                <div className="space-y-1.5">
+                                    <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide ml-1">Nomor Telepon</label>
+                                    <input
+                                        type="text"
+                                        value={saveContactPhone}
+                                        onChange={e => setSaveContactPhone(e.target.value)}
+                                        className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl font-mono text-gray-600 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-all"
+                                        placeholder="+62..."
+                                    />
+                                </div>
+
+                                <div className="space-y-1.5">
+                                    <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide ml-1">Nama Lengkap</label>
+                                    <input
+                                        autoFocus
+                                        type="text"
+                                        value={saveContactName}
+                                        onChange={(e) => setSaveContactName(e.target.value)}
+                                        className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl font-medium text-navy-900 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-all placeholder-gray-300"
+                                        placeholder="Masukkan nama kontak..."
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') handleSaveContactConfirm();
+                                        }}
+                                    />
+                                </div>
+
+                                {/* TAGS INPUT */}
+                                <div className="space-y-1.5">
+                                    <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide ml-1">Tags (Opsional)</label>
+                                    <div className="flex gap-2">
+                                        <input
+                                            type="text"
+                                            value={saveContactTagInput}
+                                            onChange={(e) => setSaveContactTagInput(e.target.value)}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter') {
+                                                    e.preventDefault();
+                                                    if (saveContactTagInput.trim() && !saveContactTags.includes(saveContactTagInput.trim())) {
+                                                        setSaveContactTags([...saveContactTags, saveContactTagInput.trim()]);
+                                                        setSaveContactTagInput('');
+                                                    }
+                                                }
+                                            }}
+                                            className="flex-1 px-4 py-3 bg-white border border-gray-200 rounded-xl font-medium text-navy-900 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-all placeholder-gray-300"
+                                            placeholder="Ketik tag & enter..."
+                                        />
+                                        <button
+                                            onClick={() => {
+                                                if (saveContactTagInput.trim() && !saveContactTags.includes(saveContactTagInput.trim())) {
+                                                    setSaveContactTags([...saveContactTags, saveContactTagInput.trim()]);
+                                                    setSaveContactTagInput('');
+                                                }
+                                            }}
+                                            disabled={!saveContactTagInput.trim()}
+                                            className="px-4 py-3 bg-primary-50 text-primary-600 rounded-xl font-bold hover:bg-primary-100 transition-colors disabled:opacity-50"
+                                        >
+                                            <Plus className="w-5 h-5" />
+                                        </button>
+                                    </div>
+
+                                    {/* Quick Selection */}
+                                    <div className="flex flex-wrap gap-2 mt-2">
+                                        {['Royal', 'Gold', 'Platinum', 'VIP'].map(tag => (
+                                            <button
+                                                key={tag}
+                                                onClick={() => {
+                                                    if (!saveContactTags.includes(tag)) {
+                                                        setSaveContactTags([...saveContactTags, tag]);
+                                                    }
+                                                }}
+                                                disabled={saveContactTags.includes(tag)}
+                                                className={`text-[10px] uppercase font-bold px-2 py-1 rounded-lg border transition-all 
+                                                    ${tag === 'Royal' ? 'bg-purple-50 text-purple-600 border-purple-100 hover:bg-purple-100' :
+                                                        tag === 'Gold' ? 'bg-amber-50 text-amber-600 border-amber-100 hover:bg-amber-100' :
+                                                            tag === 'Platinum' ? 'bg-slate-50 text-slate-600 border-slate-100 hover:bg-slate-100' :
+                                                                'bg-rose-50 text-rose-600 border-rose-100 hover:bg-rose-100'}
+                                                    ${saveContactTags.includes(tag) ? 'opacity-50 cursor-not-allowed' : ''}
+                                                `}
+                                            >
+                                                {tag}
+                                            </button>
+                                        ))}
+                                    </div>
+
+                                    {/* Active Tags */}
+                                    {saveContactTags.length > 0 && (
+                                        <div className="flex flex-wrap gap-2 mt-2 p-3 bg-gray-50 rounded-xl border border-gray-100">
+                                            {saveContactTags.map((tag, idx) => (
+                                                <span key={idx} className="flex items-center gap-1 pl-2 pr-1 py-1 bg-white border border-gray-200 rounded-lg text-xs font-medium text-gray-700 shadow-sm">
+                                                    {tag}
+                                                    <button
+                                                        onClick={() => setSaveContactTags(saveContactTags.filter(t => t !== tag))}
+                                                        className="p-0.5 hover:bg-red-50 hover:text-red-500 rounded-md transition-colors"
+                                                    >
+                                                        <X className="w-3 h-3" />
+                                                    </button>
+                                                </span>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="pt-2 flex gap-3">
+                                    <button
+                                        onClick={() => setIsSaveContactModalOpen(false)}
+                                        className="flex-1 py-2.5 bg-gray-100 text-gray-600 rounded-xl font-bold hover:bg-gray-200 transition-colors"
+                                    >
+                                        Batal
+                                    </button>
+                                    <button
+                                        onClick={handleSaveContactConfirm}
+                                        disabled={!saveContactName.trim()}
+                                        className="flex-1 py-2.5 bg-navy-900 text-white rounded-xl font-bold hover:bg-navy-800 transition-all shadow-lg shadow-navy-900/10 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                                    >
+                                        <Save className="w-4 h-4" />
+                                        Simpan
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )
+            }
 
             {/* Delete Chat Modal */}
+            {/* LIGHTBOX MODAL */}
+            {
+                selectedImage && (
+                    <div
+                        className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4"
+                        onClick={() => setSelectedImage(null)}
+                    >
+                        <div className="relative max-w-full max-h-full">
+                            <button
+                                className="absolute -top-10 right-0 text-white hover:text-gray-300 transition-colors p-2"
+                                onClick={() => setSelectedImage(null)}
+                            >
+                                <X size={32} />
+                            </button>
+                            <img
+                                src={selectedImage}
+                                alt="Full Preview"
+                                className="max-w-full max-h-[90vh] object-contain rounded-md shadow-2xl"
+                                onClick={(e) => e.stopPropagation()} // Prevent closing when clicking image
+                            />
+                        </div>
+                    </div>
+                )
+            }
+
             <DeleteConfirm
                 open={showDeleteModal}
                 onClose={() => setShowDeleteModal(false)}
@@ -659,6 +1422,73 @@ export default function LiveChat() {
                 message={`Yakin ingin menghapus riwayat chat dengan ${selectedChat?.displayName || 'Unknown Contact'}? Pesan akan hilang permanen dan tidak dapat dipulihkan.`}
                 isLoading={isDeletingChat}
             />
-        </div>
+            {/* NEW CHAT MODAL */}
+            {
+                isNewChatModalOpen && (
+                    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+                        <div className="bg-white rounded-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-200">
+                            <div className="p-6">
+                                <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
+                                    <MessageSquare className="w-5 h-5 text-primary-500" />
+                                    Mulai Chat Baru
+                                </h3>
+
+                                <div className="space-y-4">
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Nomor Telepon</label>
+                                        <input
+                                            type="tel"
+                                            placeholder="Contoh: 08123456789"
+                                            className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none transition-all"
+                                            value={newChatPhone}
+                                            onChange={e => setNewChatPhone(e.target.value)}
+                                            autoFocus
+                                        />
+                                        <p className="text-xs text-gray-500 mt-1">Masukkan nomor WhatsApp tujuan</p>
+                                    </div>
+
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Nama Kontak (Opsional)</label>
+                                        <input
+                                            type="text"
+                                            placeholder="Nama Pelanggan (Contoh: Irgi)"
+                                            className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none transition-all"
+                                            value={newChatName}
+                                            onChange={e => setNewChatName(e.target.value)}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter') handleStartNewChat();
+                                            }}
+                                        />
+                                        <p className="text-xs text-gray-500 mt-1">Jika diisi, akan otomatis disimpan sebagai customer.</p>
+                                    </div>
+
+                                    <div className="flex gap-3 pt-2">
+                                        <button
+                                            onClick={() => setIsNewChatModalOpen(false)}
+                                            className="flex-1 px-4 py-2 border border-gray-200 text-gray-600 rounded-xl hover:bg-gray-50 font-medium transition-colors"
+                                        >
+                                            Batal
+                                        </button>
+                                        <button
+                                            onClick={handleStartNewChat}
+                                            className="flex-1 px-4 py-2 bg-primary-500 text-white rounded-xl hover:bg-primary-600 font-bold transition-colors shadow-lg shadow-primary-500/30"
+                                        >
+                                            Mulai Chat
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )
+            }
+            <TagManagementModal
+                isOpen={isTagModalOpen}
+                onClose={() => setIsTagModalOpen(false)}
+                customerId={getCustomerIdForChat(selectedChat)}
+                currentTags={getTagsForChat(selectedChat)}
+                onUpdate={handleTagsUpdated}
+            />
+        </div >
     );
 }

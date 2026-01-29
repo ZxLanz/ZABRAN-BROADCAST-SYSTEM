@@ -143,7 +143,7 @@ const ZabranLogin = () => {
           </div>
 
           <div className="relative z-10 text-xs text-gray-600 font-medium tracking-widest uppercase">
-            © 2024 Zabran International Group
+            © 2026 Zabran International Group
           </div>
 
           {/* Abstract Shapes */}
@@ -250,7 +250,16 @@ const ZabranLogin = () => {
               </button>
 
               <p className="text-center text-sm text-gray-500 mt-6">
-                Don't have an account? <a href="#" className="font-bold text-navy-700 hover:text-primary-600 transition-colors">Contact Admin</a>
+                Don't have an account? <button type="button" onClick={() => {
+                  // Manual percent-encoding (URL Encoded) to bypass browser/encoding issues
+                  // 👑 = %F0%9F%91%91
+                  // 🚀 = %F0%9F%9A%80
+                  // 🙏 = %F0%9F%99%8F
+                  // ✨ = %E2%9C%A8
+                  const messageEncoded = "Permisi%20Saint%20D%20Zilan%20%F0%9F%91%91%2C%20saya%20mohon%20izin%20meminta%20akses%20akun%20untuk%20Zabran%20Broadcast%20System%20%F0%9F%9A%80.%20Terima%20kasih%20sebelumnya!%20%F0%9F%99%8F%E2%9C%A8";
+                  const url = `https://api.whatsapp.com/send?phone=6282126633112&text=${messageEncoded}&type=phone_number&app_absent=0`;
+                  window.open(url, '_blank');
+                }} className="font-bold text-navy-700 hover:text-primary-600 transition-colors bg-transparent border-none p-0 cursor-pointer inline">Contact Admin</button>
               </p>
             </form>
           </div>

@@ -6,6 +6,7 @@ import { useWhatsApp } from '../../contexts/WhatsAppContext';
 import { useNavigate, useLocation } from 'react-router-dom';
 import axios from '../../utils/axios';
 import toast from 'react-hot-toast';
+import { initSocket, disconnectSocket } from '../../utils/socket';
 
 export default function Header() {
   const { user, logout } = useAuth();
@@ -22,6 +23,7 @@ export default function Header() {
   const userMenuRef = useRef(null);
   const notifMenuRef = useRef(null);
   const pollIntervalRef = useRef(null);
+  const socketRef = useRef(null);
 
   // Dynamic Title Logic
   const getPageTitle = () => {
@@ -54,9 +56,80 @@ export default function Header() {
 
   useEffect(() => {
     fetchNotifications();
-    pollIntervalRef.current = setInterval(fetchNotifications, 30000);
-    return () => clearInterval(pollIntervalRef.current);
+    // pollIntervalRef.current = setInterval(fetchNotifications, 30000); // Removed polling in favor of socket
+    return () => {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    }
   }, []);
+
+  // 🔌 Socket.IO Integration
+  useEffect(() => {
+    if (user && user.id) { // Ensure user ID is available (id or _id depending on backend)
+      const token = localStorage.getItem('token');
+      const socket = initSocket(token);
+      socketRef.current = socket;
+
+      // Join User Room
+      const userId = user.id || user._id;
+      socket.emit('join_room', `user_${userId}`);
+      console.log(`🔌 Joining room: user_${userId}`);
+
+      // Listen for new notifications
+      socket.on('new_notification', (newNotification) => {
+        console.log('🔔 New Notification Received:', newNotification);
+
+        // Add to state immediately
+        setNotifications(prev => [newNotification, ...prev]);
+
+        // Show Toast
+        toast(
+          (t) => (
+            <div className="flex items-start gap-3" onClick={() => {
+              toast.dismiss(t.id);
+              if (newNotification.actionUrl) navigate(newNotification.actionUrl);
+            }}>
+              <div className="text-primary-600 bg-primary-50 p-2 rounded-lg">
+                <Bell size={18} />
+              </div>
+              <div>
+                <p className="font-semibold text-sm text-gray-900">{newNotification.title}</p>
+                <p className="text-xs text-gray-500 line-clamp-2">{newNotification.message}</p>
+              </div>
+            </div>
+          ),
+          { duration: 4000, position: 'top-right' }
+        );
+      });
+
+      // Listen for batch updates
+      socket.on('notifications_read_all', () => {
+        setNotifications(prev => prev.map(n => ({ ...n, unread: false })));
+      });
+
+      socket.on('notifications_cleared', () => {
+        setNotifications([]);
+      });
+
+      // Listen for single updates
+      socket.on('notification_updated', (updated) => {
+        setNotifications(prev => prev.map(n => n._id === updated._id ? updated : n));
+      });
+
+      socket.on('notification_deleted', (deleted) => {
+        setNotifications(prev => prev.filter(n => n._id !== deleted.id));
+      });
+
+      return () => {
+        socket.off('new_notification');
+        socket.off('notifications_read_all');
+        socket.off('notifications_cleared');
+        socket.off('notification_updated');
+        socket.off('notification_deleted');
+        // disconnectSocket(); // Optional: Don't disconnect if shared, but good for cleanup
+      };
+    }
+  }, [user, navigate]);
+
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -127,20 +200,51 @@ export default function Header() {
               <div className="absolute right-0 mt-3 w-80 bg-white rounded-xl shadow-2xl border border-gray-100 overflow-hidden animate-scale-in origin-top-right">
                 <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
                   <h3 className="font-semibold text-gray-800">Notifications</h3>
-                  <span className="text-xs bg-primary-100 text-primary-700 px-2 py-0.5 rounded-full font-medium">{unreadCount} New</span>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs bg-primary-100 text-primary-700 px-2 py-0.5 rounded-full font-medium">{unreadCount} New</span>
+                    <button
+                      onClick={() => navigate('/notifications')}
+                      className="text-xs text-primary-600 hover:text-primary-700 font-medium hover:underline"
+                    >
+                      View All
+                    </button>
+                  </div>
                 </div>
                 <div className="max-h-[300px] overflow-y-auto">
                   {notifications.length === 0 ? (
                     <div className="p-8 text-center text-gray-400 text-sm">No new notifications</div>
                   ) : (
-                    notifications.map(n => (
-                      <div key={n._id} className="p-4 border-b border-gray-50 hover:bg-gray-50/50 transition-colors">
-                        <p className="text-sm font-medium text-gray-800">{n.title}</p>
-                        <p className="text-xs text-gray-500 mt-1">{n.message}</p>
+                    notifications.slice(0, 5).map(n => ( // Limit to 5 in dropdown
+                      <div key={n._id} className={`p-4 border-b border-gray-50 hover:bg-gray-50/50 transition-colors cursor-pointer ${n.unread ? 'bg-blue-50/30' : ''}`}
+                        onClick={() => {
+                          setShowNotifications(false);
+                          if (n.actionUrl) navigate(n.actionUrl);
+                        }}
+                      >
+                        <div className="flex gap-3">
+                          <div className={`mt-1 p-1.5 rounded-lg h-fit ${n.unread ? 'bg-white shadow-sm text-primary-600' : 'bg-gray-100 text-gray-500'}`}>
+                            {/* Use Lucide Icon based on n.icon name if dynamic, or default Bell */}
+                            <Bell size={14} />
+                          </div>
+                          <div>
+                            <p className={`text-sm ${n.unread ? 'font-semibold text-navy-900' : 'font-medium text-gray-700'}`}>{n.title}</p>
+                            <p className="text-xs text-gray-500 mt-1 line-clamp-2">{n.message}</p>
+                            <p className="text-[10px] text-gray-400 mt-1.5">
+                              {new Date(n.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </p>
+                          </div>
+                        </div>
                       </div>
                     ))
                   )}
                 </div>
+                {notifications.length > 5 && (
+                  <div className="p-2 border-t border-gray-100 bg-gray-50/50 text-center">
+                    <button onClick={() => navigate('/notifications')} className="text-xs text-gray-500 hover:text-navy-900 font-medium">
+                      See {notifications.length - 5} more...
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -153,7 +257,7 @@ export default function Header() {
             >
               <div className="text-right hidden md:block">
                 <p className="text-sm font-bold text-navy-900 leading-none">{user?.name?.split(' ')[0]}</p>
-                <p className="text-[10px] text-gray-500 font-medium uppercase tracking-wide">{user?.role}</p>
+                <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">{user?.role}</p>
               </div>
               <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-primary-400 to-primary-600 flex items-center justify-center text-white font-bold shadow-md shadow-primary-500/20">
                 {user?.name?.charAt(0) || 'U'}
@@ -165,7 +269,7 @@ export default function Header() {
               <div className="absolute right-0 mt-3 w-56 bg-white rounded-xl shadow-2xl border border-gray-100 overflow-hidden animate-scale-in origin-top-right">
                 <div className="p-2 space-y-1">
                   <button onClick={() => navigate('/settings')} className="w-full px-4 py-2.5 text-sm text-gray-600 hover:text-navy-900 hover:bg-gray-50 rounded-lg flex items-center gap-3 transition-colors text-left">
-                    <Settings size={16} /> Settings
+                    <Settings size={16} /> settings
                   </button>
                   <div className="h-px bg-gray-100 my-1"></div>
                   <button onClick={logout} className="w-full px-4 py-2.5 text-sm text-red-500 hover:bg-red-50 rounded-lg flex items-center gap-3 transition-colors text-left font-medium">

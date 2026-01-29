@@ -10,7 +10,7 @@ export default function Notifications() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('all'); // 'all', 'unread', 'read'
   const [selectedIds, setSelectedIds] = useState([]);
-  
+
   // ✅ Delete confirmation states
   const [deleteModal, setDeleteModal] = useState({ open: false, id: null, type: 'single' });
   const [isDeleting, setIsDeleting] = useState(false);
@@ -21,7 +21,7 @@ export default function Notifications() {
       setLoading(true);
       const { data } = await axios.get('/notifications');
       setNotifications(data.data || []); // ✅ FIXED: data.data
-      console.log('✅ Fetched notifications:', data.data?.length || 0);
+
     } catch (err) {
       console.error('Error fetching notifications:', err);
       if (err.response?.status !== 401) {
@@ -47,7 +47,7 @@ export default function Notifications() {
   const markAsRead = async (id) => {
     try {
       await axios.patch(`/notifications/${id}/read`);
-      setNotifications(prev => 
+      setNotifications(prev =>
         prev.map(n => n._id === id ? { ...n, unread: false } : n)
       );
       toast.success('Marked as read');
@@ -61,7 +61,7 @@ export default function Notifications() {
   const markAsUnread = async (id) => {
     try {
       await axios.patch(`/notifications/${id}/unread`);
-      setNotifications(prev => 
+      setNotifications(prev =>
         prev.map(n => n._id === id ? { ...n, unread: true } : n)
       );
       toast.success('Marked as unread');
@@ -75,7 +75,7 @@ export default function Notifications() {
   const markAllAsRead = async () => {
     try {
       await axios.patch('/notifications/read-all');
-      setNotifications(prev => 
+      setNotifications(prev =>
         prev.map(n => ({ ...n, unread: false }))
       );
       toast.success('All marked as read');
@@ -154,8 +154,8 @@ export default function Notifications() {
 
   // Toggle selection
   const toggleSelect = (id) => {
-    setSelectedIds(prev => 
-      prev.includes(id) 
+    setSelectedIds(prev =>
+      prev.includes(id)
         ? prev.filter(i => i !== id)
         : [...prev, id]
     );
@@ -175,7 +175,7 @@ export default function Notifications() {
   // Time ago formatter
   const timeAgo = (date) => {
     const seconds = Math.floor((new Date() - new Date(date)) / 1000);
-    
+
     if (seconds < 60) return 'Just now';
     if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`;
     if (seconds < 86400) return `${Math.floor(seconds / 3600)} hour${Math.floor(seconds / 3600) > 1 ? 's' : ''} ago`;
@@ -209,14 +209,14 @@ export default function Notifications() {
         return {
           title: 'Delete Notification',
           message: 'Are you sure?',
-          onConfirm: () => {}
+          onConfirm: () => { }
         };
     }
   };
 
   return (
     <div className="animate-slide-in">
-      
+
       {/* Page Header */}
       <div className="mb-8">
         <div className="flex items-center justify-between mb-2">
@@ -226,8 +226,8 @@ export default function Notifications() {
               Notifications
             </h1>
             <p className="text-base text-gray-600 font-medium">
-              {unreadCount > 0 
-                ? `You have ${unreadCount} unread notification${unreadCount > 1 ? 's' : ''}` 
+              {unreadCount > 0
+                ? `You have ${unreadCount} unread notification${unreadCount > 1 ? 's' : ''}`
                 : 'All caught up! No new notifications.'}
             </p>
           </div>
@@ -259,37 +259,34 @@ export default function Notifications() {
       {/* Filters Card */}
       <div className="card p-5 mb-6">
         <div className="flex items-center justify-between">
-          
+
           {/* Filter Buttons */}
           <div className="flex items-center gap-3">
             <Filter className="w-5 h-5 text-gray-500" />
             <button
               onClick={() => setFilter('all')}
-              className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all ${
-                filter === 'all'
+              className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all ${filter === 'all'
                   ? 'bg-primary-500 text-white shadow-md'
                   : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
+                }`}
             >
               All ({notifications.length})
             </button>
             <button
               onClick={() => setFilter('unread')}
-              className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all ${
-                filter === 'unread'
+              className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all ${filter === 'unread'
                   ? 'bg-primary-500 text-white shadow-md'
                   : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
+                }`}
             >
               Unread ({unreadCount})
             </button>
             <button
               onClick={() => setFilter('read')}
-              className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all ${
-                filter === 'read'
+              className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all ${filter === 'read'
                   ? 'bg-primary-500 text-white shadow-md'
                   : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
+                }`}
             >
               Read ({notifications.length - unreadCount})
             </button>
@@ -328,7 +325,7 @@ export default function Notifications() {
 
       {/* Notifications List Card */}
       <div className="card p-7">
-        
+
         {/* Loading State */}
         {loading && (
           <div className="text-center py-12">
@@ -342,12 +339,12 @@ export default function Notifications() {
           <div className="text-center py-12">
             <Bell className="w-16 h-16 mx-auto mb-4 text-gray-300" />
             <h3 className="text-lg font-bold text-gray-900 mb-2">
-              {filter === 'unread' ? 'No unread notifications' : 
-               filter === 'read' ? 'No read notifications' : 
-               'No notifications yet'}
+              {filter === 'unread' ? 'No unread notifications' :
+                filter === 'read' ? 'No read notifications' :
+                  'No notifications yet'}
             </h3>
             <p className="text-gray-600 font-medium">
-              {filter === 'all' 
+              {filter === 'all'
                 ? 'When you receive notifications, they will appear here'
                 : `Switch to "${filter === 'unread' ? 'all or read' : 'all or unread'}" to see more`
               }
@@ -361,14 +358,13 @@ export default function Notifications() {
             {filteredNotifications.map((notif) => (
               <div
                 key={notif._id}
-                className={`p-5 rounded-xl border-2 transition-all hover:shadow-md ${
-                  notif.unread // ✅ FIXED: notif.unread
-                    ? 'bg-primary-50/30 border-primary-200' 
+                className={`p-5 rounded-xl border-2 transition-all hover:shadow-md ${notif.unread // ✅ FIXED: notif.unread
+                    ? 'bg-primary-50/30 border-primary-200'
                     : 'bg-white border-gray-200'
-                } ${selectedIds.includes(notif._id) ? 'ring-2 ring-primary-500' : ''}`}
+                  } ${selectedIds.includes(notif._id) ? 'ring-2 ring-primary-500' : ''}`}
               >
                 <div className="flex items-start gap-4">
-                  
+
                   {/* Checkbox */}
                   <input
                     type="checkbox"

@@ -1,5 +1,6 @@
 /** @type {import('tailwindcss').Config} */
 export default {
+  darkMode: 'class',
   content: [
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
@@ -20,7 +21,7 @@ export default {
           800: '#7d663a',
           900: '#665330',
         },
-        
+
         // Navy/Dark Theme Colors
         navy: {
           50: '#f8f9fa',
@@ -35,24 +36,24 @@ export default {
           900: '#0f1621',  // Header/Footer color
           950: '#0a0f1a',  // Darkest
         },
-        
+
         // Alias for easier use
         gold: {
           light: '#e5c687',
           DEFAULT: '#d4af6a',
           dark: '#b89654',
         },
-        
+
         dark: {
           DEFAULT: '#1a2332',
           darker: '#0f1621',
         }
       },
-      
+
       fontFamily: {
         sans: ['Inter', 'system-ui', 'sans-serif'],
       },
-      
+
       fontSize: {
         'xs': ['0.75rem', { lineHeight: '1rem' }],      // 12px
         'sm': ['0.875rem', { lineHeight: '1.25rem' }],  // 14px
@@ -63,22 +64,22 @@ export default {
         '3xl': ['1.875rem', { lineHeight: '2.25rem' }], // 30px
         '4xl': ['2.25rem', { lineHeight: '2.5rem' }],   // 36px
       },
-      
+
       spacing: {
         '18': '4.5rem',   // 72px
         '88': '22rem',    // 352px (sidebar width)
       },
-      
+
       boxShadow: {
         'gold': '0 10px 15px -3px rgba(212, 175, 106, 0.1), 0 4px 6px -2px rgba(212, 175, 106, 0.05)',
         'gold-lg': '0 20px 25px -5px rgba(212, 175, 106, 0.15), 0 10px 10px -5px rgba(212, 175, 106, 0.04)',
       },
-      
+
       animation: {
         'pulse-dot': 'pulse-dot 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
         'slide-in': 'slide-in 0.3s ease-out',
       },
-      
+
       keyframes: {
         'pulse-dot': {
           '0%, 100%': { opacity: '1', transform: 'scale(1)' },
@@ -89,7 +90,7 @@ export default {
           '100%': { opacity: '1', transform: 'translateY(0)' },
         },
       },
-      
+
       borderRadius: {
         'xl': '1rem',    // 16px
         '2xl': '1.5rem', // 24px

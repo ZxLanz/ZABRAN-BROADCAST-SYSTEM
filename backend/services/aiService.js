@@ -118,7 +118,7 @@ const generateMessage = async ({ prompt, tone = 'casual', length = 'medium' }) =
 
   } catch (error) {
     console.error('❌ [AI Service] Error:', error.message);
-    
+
     // Handle different error types
     if (error.response) {
       // N8N returned an error response
@@ -127,12 +127,11 @@ const generateMessage = async ({ prompt, tone = 'casual', length = 'medium' }) =
         statusText: error.response.statusText,
         data: error.response.data
       });
-      
+
       throw new Error(
-        `N8N Webhook Error (${error.response.status}): ${
-          error.response.data?.message || 
-          error.response.data?.error || 
-          error.response.statusText
+        `N8N Webhook Error (${error.response.status}): ${error.response.data?.message ||
+        error.response.data?.error ||
+        error.response.statusText
         }`
       );
     } else if (error.request) {
@@ -143,7 +142,7 @@ const generateMessage = async ({ prompt, tone = 'casual', length = 'medium' }) =
         method: 'POST',
         timeout: '30s'
       });
-      
+
       throw new Error(
         'Cannot connect to AI service. Please check:\n' +
         '1. N8N is running (http://localhost:5678)\n' +
@@ -169,7 +168,7 @@ const testConnection = async () => {
   try {
     console.log('🔍 [AI Service] Testing connection...');
     console.log('📡 Webhook URL:', N8N_WEBHOOK_URL);
-    
+
     // Try to generate a simple test message
     const result = await generateMessage({
       prompt: 'Test koneksi AI service',
@@ -194,7 +193,7 @@ const testConnection = async () => {
     };
   } catch (error) {
     console.error('❌ [AI Service] Connection test failed:', error.message);
-    
+
     return {
       success: false,
       status: 'disconnected',
@@ -234,8 +233,92 @@ const getServiceInfo = () => {
   };
 };
 
+/**
+ * Get Auto Reply from AI (N8N)
+ * @param {string} message - User message
+ * @returns {Promise<string>} AI Response
+ */
+/**
+ * Get Auto Reply from AI
+ * @param {string} message - User message
+ * @param {Array<string>} [images] - Array of Base64 image strings (optional)
+ * @returns {Promise<string>} AI Response
+ */
+const getAutoReply = async (message, images = []) => {
+  try {
+    // 📸 VISION HANDLING (Direct OpenRouter)
+    if (images && images.length > 0) {
+      const openRouterKey = process.env.OPENROUTER_API_KEY;
+      if (openRouterKey) {
+        console.log(`📸 [AI Vision] Processing ${images.length} image(s) via OpenRouter...`);
+
+        try {
+          const payload = {
+            model: 'xiaomi/mimo-v2-flash', // Multimodal Model
+            messages: [
+              {
+                role: 'user',
+                content: [
+                  { type: 'text', text: message },
+                  ...images.map(img => ({
+                    type: 'image_url',
+                    image_url: { url: `data:image/jpeg;base64,${img}` }
+                  }))
+                ]
+              }
+            ]
+          };
+
+          const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', payload, {
+            headers: {
+              'Authorization': `Bearer ${openRouterKey}`,
+              'Content-Type': 'application/json',
+              'HTTP-Referer': 'https://zabran-broadcast.com',
+              'X-Title': 'Zabran Broadcast'
+            },
+            timeout: 60000
+          });
+
+          if (response.data?.choices?.[0]?.message?.content) {
+            console.log('👁️ [AI Vision] Response received');
+            return response.data.choices[0].message.content;
+          }
+        } catch (visionErr) {
+          console.error('⚠️ [Vision] Failed, falling back to text-only:', visionErr.message);
+        }
+      } else {
+        console.warn('⚠️ [Vision] No OPENROUTER_API_KEY found, ignoring image.');
+      }
+    }
+
+    // 📝 TEXT ONLY (Existing N8N Flow)
+    const N8N_AUTOREPLY_URL = 'http://localhost:5678/webhook/autoreply';
+    // console.log(`[AI-Service] Sending to ${N8N_AUTOREPLY_URL}:`, message.substring(0, 50));
+
+    const response = await axios.post(N8N_AUTOREPLY_URL, {
+      message: `[SYSTEM: Anda adalah asisten virtual Zabran System. JANGAN PERNAH menyapa user dengan nama "Lan", "Gan", atau nama tebakan lainnya. Jika nama user tidak diketahui pasti, panggil dengan "Kak". Jawablah pertanyaan user berikut ini:]\n\n${message}`
+    }, { timeout: 60000 }); // 60s timeout
+
+    // Robust Response Handling
+    if (response.data.reply) return response.data.reply;
+    if (response.data.message) return response.data.message;
+    if (typeof response.data === 'string') return response.data;
+
+    // Check choices format (OpenAI/Gemini style passthrough)
+    if (response.data.choices && response.data.choices[0]?.message?.content) {
+      return response.data.choices[0].message.content;
+    }
+
+    return null;
+  } catch (error) {
+    console.error('❌ [AI] AutoReply Error:', error.message);
+    return null;
+  }
+};
+
 module.exports = {
   generateMessage,
   testConnection,
-  getServiceInfo
+  getServiceInfo,
+  getAutoReply
 };

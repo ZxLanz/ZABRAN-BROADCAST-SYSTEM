@@ -12,7 +12,7 @@ export default function WhatsAppBanner() {
   const [isExiting, setIsExiting] = useState(false);
   const [isInitialLoading, setIsInitialLoading] = useState(true); // ✅ NEW
   const navigate = useNavigate();
-  
+
   const refreshIntervalRef = useRef(null);
   const dismissTimeoutRef = useRef(null);
   const autoStopTimeoutRef = useRef(null);
@@ -29,27 +29,27 @@ export default function WhatsAppBanner() {
   // ✅ INSTANT HIDE when status becomes 'connected'
   useEffect(() => {
     console.log('🎯 Banner - Current status:', status);
-    
+
     if (status === 'connected') {
       console.log('✅ Status is connected - hiding banner');
-      
+
       // Clear interval when connected
       if (refreshIntervalRef.current) {
         clearInterval(refreshIntervalRef.current);
         refreshIntervalRef.current = null;
         console.log('🛑 Cleared refresh interval (status changed to connected)');
       }
-      
+
       if (!isExiting) {
         setIsExiting(true);
-        
+
         setTimeout(() => {
           setDismissed(true);
           setIsExiting(false);
         }, 500);
       }
     }
-    
+
     // Reset dismissed when status changes back to disconnected
     if (status === 'disconnected' || status === 'qrcode' || status === 'error') {
       setDismissed(false);
@@ -61,17 +61,17 @@ export default function WhatsAppBanner() {
   useEffect(() => {
     return () => {
       console.log('🧹 Cleaning up WhatsAppBanner...');
-      
+
       if (refreshIntervalRef.current) {
         clearInterval(refreshIntervalRef.current);
         refreshIntervalRef.current = null;
       }
-      
+
       if (dismissTimeoutRef.current) {
         clearTimeout(dismissTimeoutRef.current);
         dismissTimeoutRef.current = null;
       }
-      
+
       if (autoStopTimeoutRef.current) {
         clearTimeout(autoStopTimeoutRef.current);
         autoStopTimeoutRef.current = null;
@@ -94,42 +94,42 @@ export default function WhatsAppBanner() {
     return null;
   }
 
-  // Don't show if connecting (give it time)
-  if (status === 'connecting') {
+  // Don't show if connecting or QR code ready (user is actively connecting)
+  if (status === 'connecting' || status === 'qrcode') {
     return null;
   }
 
   const handleReconnect = async () => {
     setIsReconnecting(true);
-    
+
     try {
       const result = await connect();
-      
+
       if (result.success) {
         toast.success('WhatsApp reconnection initiated!');
-        
+
         // Clear previous intervals before creating new ones
         if (refreshIntervalRef.current) {
           clearInterval(refreshIntervalRef.current);
           refreshIntervalRef.current = null;
           console.log('🧹 Cleared previous refresh interval');
         }
-        
+
         if (autoStopTimeoutRef.current) {
           clearTimeout(autoStopTimeoutRef.current);
           autoStopTimeoutRef.current = null;
           console.log('🧹 Cleared previous auto-stop timeout');
         }
-        
+
         // AGGRESSIVE REFRESH with proper cleanup
         let refreshCount = 0;
         const maxRefresh = 10;
-        
+
         refreshIntervalRef.current = setInterval(() => {
           console.log('🔄 Aggressive refresh #', refreshCount + 1);
           refresh();
           refreshCount++;
-          
+
           // Stop after max refreshes
           if (refreshCount >= maxRefresh) {
             if (refreshIntervalRef.current) {
@@ -139,7 +139,7 @@ export default function WhatsAppBanner() {
             }
           }
         }, 2000);
-        
+
         // Auto-stop after 20 seconds (safety net)
         autoStopTimeoutRef.current = setTimeout(() => {
           if (refreshIntervalRef.current) {
@@ -148,7 +148,7 @@ export default function WhatsAppBanner() {
             console.log('🛑 Stopped aggressive refresh - 20 second timeout');
           }
         }, 20000);
-        
+
         // Redirect to WhatsApp page after 1 second
         setTimeout(() => {
           navigate('/whatsapp');
@@ -166,17 +166,17 @@ export default function WhatsAppBanner() {
 
   const handleDismiss = () => {
     setIsExiting(true);
-    
+
     // Clear previous dismiss timeout
     if (dismissTimeoutRef.current) {
       clearTimeout(dismissTimeoutRef.current);
       dismissTimeoutRef.current = null;
     }
-    
+
     setTimeout(() => {
       setDismissed(true);
       setIsExiting(false);
-      
+
       // Auto-show again after 5 minutes if still disconnected
       dismissTimeoutRef.current = setTimeout(() => {
         if (status !== 'connected') {
@@ -188,7 +188,7 @@ export default function WhatsAppBanner() {
   };
 
   return (
-    <div 
+    <div
       className={`
         bg-gradient-to-r from-amber-500/10 via-orange-500/10 to-red-500/10 
         border-b border-amber-500/20
@@ -199,12 +199,12 @@ export default function WhatsAppBanner() {
     >
       <div className="max-w-7xl mx-auto px-6 py-3.5">
         <div className="flex items-center justify-between gap-4">
-          
+
           <div className="flex items-center gap-3">
             <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-gradient-to-br from-amber-500 to-orange-500 flex items-center justify-center shadow-lg">
               <AlertTriangle className="w-5 h-5 text-white" />
             </div>
-            
+
             <div>
               <p className="font-semibold text-sm text-gray-900">
                 WhatsApp Disconnected
@@ -241,7 +241,7 @@ export default function WhatsAppBanner() {
                 'Reconnect Now'
               )}
             </button>
-            
+
             <button
               onClick={handleDismiss}
               className="

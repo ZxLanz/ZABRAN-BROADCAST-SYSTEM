@@ -60,7 +60,7 @@ export default function Dashboard() {
           label: 'Total Customers',
           value: stats.customers.total.toLocaleString(),
           icon: Users,
-          trend: stats.customers.growthRate 
+          trend: stats.customers.growthRate
             ? `${stats.customers.growthRate > 0 ? '+' : ''}${stats.customers.growthRate}% from last month`
             : null,
           trendUp: stats.customers.growthRate > 0,
@@ -180,16 +180,16 @@ export default function Dashboard() {
 
   return (
     <div className="animate-slide-in">
-      
+
       {/* Page Header */}
       <div className="mb-8">
         <div className="flex items-center justify-between mb-2">
           <div>
-            <h1 className="text-4xl font-black text-navy-800 tracking-tight mb-1">
+            <h1 className="text-4xl font-black text-navy-800 dark:text-white tracking-tight mb-1">
               {isAdmin ? 'Dashboard' : 'My Dashboard'}
             </h1>
-            <p className="text-base text-gray-600 font-medium">
-              {isAdmin 
+            <p className="text-base text-gray-600 dark:text-gray-300 font-medium">
+              {isAdmin
                 ? "Welcome back! Here's what's happening with your broadcasts today."
                 : "Welcome back! Here's your personal broadcast activity today."
               }
@@ -217,7 +217,7 @@ export default function Dashboard() {
         <div className="bg-red-50 border-2 border-red-200 rounded-xl p-6 mb-8">
           <h3 className="text-red-800 font-bold mb-2">Error Loading Dashboard</h3>
           <p className="text-red-600">{error}</p>
-          <button 
+          <button
             onClick={loadDashboardData}
             className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg font-semibold hover:bg-red-700"
           >
@@ -232,9 +232,9 @@ export default function Dashboard() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
             {getStatCards().map((stat, index) => {
               const Icon = stat.icon;
-              
+
               return (
-                <div key={index} className="stat-card">
+                <div key={index} className="stat-card bg-white dark:bg-[#1f2937] border dark:border-gray-700">
                   {/* Icon Container */}
                   <div className="relative z-10 mb-4">
                     <div className="w-14 h-14 bg-primary-500/10 border border-primary-500/20 rounded-2xl flex items-center justify-center shadow-sm">
@@ -244,11 +244,11 @@ export default function Dashboard() {
 
                   {/* Content */}
                   <div className="relative z-10">
-                    <div className="text-sm text-gray-600 font-semibold mb-2">
+                    <div className="text-sm text-gray-600 dark:text-gray-400 font-semibold mb-2">
                       {stat.label}
                     </div>
-                    
-                    <div className="text-4xl font-black text-navy-800 tracking-tight mb-3">
+
+                    <div className="text-4xl font-black text-navy-800 dark:text-white tracking-tight mb-3">
                       {stat.value}
                     </div>
 
@@ -259,9 +259,9 @@ export default function Dashboard() {
                         <span>{stat.trend}</span>
                       </div>
                     )}
-                    
+
                     {stat.subtitle && (
-                      <div className="text-sm text-gray-600 font-semibold">
+                      <div className="text-sm text-gray-600 dark:text-gray-400 font-semibold">
                         {stat.subtitle}
                       </div>
                     )}
@@ -272,11 +272,11 @@ export default function Dashboard() {
           </div>
 
           {/* Broadcast Schedule Table */}
-          <div className="card p-7">
-            
+          <div className="card p-7 bg-white dark:bg-[#1f2937] border dark:border-gray-700">
+
             {/* Table Header */}
             <div className="flex items-center justify-between mb-7">
-              <h2 className="text-2xl font-black text-navy-800 tracking-tight">
+              <h2 className="text-2xl font-black text-navy-800 dark:text-white tracking-tight">
                 {isAdmin ? 'Recent Broadcasts' : 'My Recent Broadcasts'}
               </h2>
 
@@ -285,7 +285,7 @@ export default function Dashboard() {
                   <Filter className="w-4 h-4" />
                   <span>Filter</span>
                 </button>
-                
+
                 <button className="bg-navy-800 text-white px-5 py-2.5 rounded-xl font-semibold flex items-center gap-2 hover:bg-navy-700 transition-colors shadow-md">
                   <Download className="w-4 h-4" />
                   <span>Export CSV</span>
@@ -309,7 +309,7 @@ export default function Dashboard() {
                     {broadcasts.map((broadcast) => (
                       <tr key={broadcast._id}>
                         <td>
-                          <div className="font-bold text-navy-800 mb-1">
+                          <div className="font-bold text-navy-800 dark:text-white mb-1">
                             {broadcast.name}
                           </div>
                           <div className="text-xs text-gray-400">
@@ -319,7 +319,7 @@ export default function Dashboard() {
                         <td>
                           {getStatusBadge(broadcast.status)}
                         </td>
-                        <td className="font-medium text-gray-700">
+                        <td className="font-medium text-gray-700 dark:text-gray-300">
                           {broadcast.successCount + broadcast.failedCount} / {broadcast.totalRecipients}
                         </td>
                         <td>
@@ -332,9 +332,9 @@ export default function Dashboard() {
                                 <Download className="w-4 h-4" />
                               </button>
                             )}
-                            <button 
+                            <button
                               onClick={() => handleDeleteBroadcast(broadcast._id)}
-                              className="btn-icon" 
+                              className="btn-icon"
                               title="Delete"
                             >
                               <Trash2 className="w-4 h-4" />

@@ -296,7 +296,7 @@ const getAutoReply = async (message, images = []) => {
     // console.log(`[AI-Service] Sending to ${N8N_AUTOREPLY_URL}:`, message.substring(0, 50));
 
     const response = await axios.post(N8N_AUTOREPLY_URL, {
-      message: `[SYSTEM: Anda adalah asisten virtual Zabran System. JANGAN PERNAH menyapa user dengan nama "Lan", "Gan", atau nama tebakan lainnya. Jika nama user tidak diketahui pasti, panggil dengan "Kak". Jawablah pertanyaan user berikut ini:]\n\n${message}`
+      message: message
     }, { timeout: 60000 }); // 60s timeout
 
     // Robust Response Handling

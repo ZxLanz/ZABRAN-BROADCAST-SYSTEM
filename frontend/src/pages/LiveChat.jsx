@@ -6,12 +6,12 @@ import { io } from 'socket.io-client';
 import {
     MessageSquare, Send, Paperclip, MoreVertical, Search,
     Check, CheckCheck, Trash2, X, Image as ImageIcon, FileText,
-    Smile, Download, Mic, StopCircle, User, Phone, Video, Plus, UserPlus, Save, ArrowLeft, Music // Added icons
+    Smile, Download, Mic, StopCircle, User, Phone, Video, Plus, UserPlus, Save, ArrowLeft, Music, Reply, Edit // Added Reply icon
 } from 'lucide-react';
 import ChatAvatar from '../components/ChatAvatar';
 import DeleteConfirm from '../components/DeleteConfirm';
 import TagManagementModal from '../components/TagManagementModal';
-import { Edit } from 'lucide-react';
+
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
@@ -21,17 +21,24 @@ export default function LiveChat() {
     const [selectedImage, setSelectedImage] = useState(null); // Lightbox State
     const [messages, setMessages] = useState([]);
     const [inputText, setInputText] = useState('');
+    const [replyingTo, setReplyingTo] = useState(null); // Reply State
     const [customers, setCustomers] = useState([]); // Store customers for tagging logic
+    const [isMessageSearchOpen, setIsMessageSearchOpen] = useState(false);
+    const [messageSearchQuery, setMessageSearchQuery] = useState('');
 
-    // ... (rest of logic)
+    // Keep selectedChatRef synced
+    useEffect(() => {
+        selectedChatRef.current = selectedChat;
+    }, [selectedChat]);
+
+
 
 
     const [searchQuery, setSearchQuery] = useState('');
     const [isLoadingChats, setIsLoadingChats] = useState(true);
     const [isLoadingMessages, setIsLoadingMessages] = useState(false);
     const [showMenu, setShowMenu] = useState(false);
-    const [isMessageSearchOpen, setIsMessageSearchOpen] = useState(false);
-    const [messageSearchQuery, setMessageSearchQuery] = useState('');
+    const [presenceMap, setPresenceMap] = useState({}); // Map of JID -> Presence Data
     const [showDeleteModal, setShowDeleteModal] = useState(false);
     const [isDeletingChat, setIsDeletingChat] = useState(false);
     // Save Contact Modal State
@@ -59,6 +66,9 @@ export default function LiveChat() {
     const mediaRecorderRef = useRef(null);
     const audioChunksRef = useRef([]);
     const timerRef = useRef(null);
+    const chatContainerRef = useRef(null); // Ref for scroll container
+    const [hasMoreMessages, setHasMoreMessages] = useState(false);
+    const [isLoadingMore, setIsLoadingMore] = useState(false);
 
     // Format Duration (mm:ss)
     const formatDuration = (seconds) => {
@@ -70,6 +80,7 @@ export default function LiveChat() {
     const startRecording = async () => {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            streamRef.current = stream; // ✅ Store stream in ref
             const mediaRecorder = new MediaRecorder(stream);
             mediaRecorderRef.current = mediaRecorder;
             audioChunksRef.current = [];
@@ -88,8 +99,11 @@ export default function LiveChat() {
                 // Helper to send (reuse existing logic)
                 await sendVoiceNote(audioFile);
 
-                // Stop tracks
-                stream.getTracks().forEach(track => track.stop());
+                // Stop tracks safely
+                if (streamRef.current) {
+                    streamRef.current.getTracks().forEach(track => track.stop());
+                    streamRef.current = null;
+                }
             };
 
             mediaRecorder.start();
@@ -112,6 +126,7 @@ export default function LiveChat() {
             mediaRecorderRef.current.stop();
             setIsRecording(false);
             clearInterval(timerRef.current);
+            // Stream cleanup happens in onstop
         }
     };
 
@@ -120,14 +135,19 @@ export default function LiveChat() {
             // Stop but don't process
             mediaRecorderRef.current.onstop = null; // Clear handler
             mediaRecorderRef.current.stop();
-            // Stop tracks
-            mediaRecorderRef.current.stream?.getTracks().forEach(track => track.stop());
+
+            // ✅ Stop tracks from Ref
+            if (streamRef.current) {
+                streamRef.current.getTracks().forEach(track => track.stop());
+                streamRef.current = null;
+            }
 
             setIsRecording(false);
             setRecordingDuration(0);
             clearInterval(timerRef.current);
         }
     };
+
 
     const sendVoiceNote = async (file) => {
         const toastId = toast.loading('Sending voice note...');
@@ -248,9 +268,16 @@ export default function LiveChat() {
         }
     }, []);
 
-    const markAsRead = useCallback(async (jid) => {
+    const markAsRead = useCallback(async (chatOrJid) => {
         try {
-            await axios.post(`/chats/${jid}/read`);
+            const jid = chatOrJid._id || chatOrJid;
+            const payload = {};
+            if (chatOrJid.mergedJids && Array.isArray(chatOrJid.mergedJids)) {
+                payload.jids = chatOrJid.mergedJids;
+            }
+
+            await axios.post(`/chats/${jid}/read`, payload);
+
             // Update local state to clear badge
             setConversations(prev => prev.map(c =>
                 c._id === jid ? { ...c, unreadCount: 0 } : c
@@ -319,21 +346,32 @@ export default function LiveChat() {
         return () => document.removeEventListener("mousedown", handleClickOutside);
     }, []);
 
-    // Connect Socket
+    // Socket Connection
     useEffect(() => {
-        socketRef.current = io(API_URL.replace('/api', ''), {
-            withCredentials: true
+        const userId = localStorage.getItem('userId'); // Assuming stored
+        if (!userId) return;
+
+        // Only connect if not already connected (or handle strict mode)
+        // socketRef.current = io(...); 
+        // For simplicity reusing existing logic but fixing dependencies:
+
+        const newSocket = io(API_URL.replace('/api', ''), {
+            query: { userId: user ? user.id : '' }
+        });
+        socketRef.current = newSocket;
+
+        newSocket.on('connect', () => {
+            console.log('🔌 Connected to WebSocket');
+            // Re-join rooms if needed
         });
 
-        socketRef.current.on('new_message', (data) => {
+        newSocket.on('new_message', (data) => {
             const incomingMsg = data.message;
-            const incomingPhone = incomingMsg.remoteJid.replace(/\D/g, '').split(':')[0];
+            if (incomingMsg.userId !== user.id) return; // Prevent cross-user data (if shared socket)
 
-            // Update conversation list
             setConversations(prev => {
                 const newList = [...prev];
                 // Match by ID OR by phone digits for robust deduplication
-                // incomingMsg.remoteJid usually includes suffix (@s.whatsapp.net), but c._id might be just phone
                 const index = newList.findIndex(c =>
                     c._id === incomingMsg.remoteJid ||
                     normalizePhone(c._id) === normalizePhone(incomingMsg.remoteJid)
@@ -342,30 +380,53 @@ export default function LiveChat() {
                 if (index !== -1) {
                     const updatedChat = { ...newList[index] };
                     updatedChat.lastMessage = incomingMsg;
+                    updatedChat.lastMessageTime = incomingMsg.timestamp;
+
                     // Move to top
                     newList.splice(index, 1);
                     newList.unshift(updatedChat);
-                    // Increment unread if current chat is NOT open
-                    if (selectedChat?._id !== updatedChat._id) {
+
+                    // ✅ FIXED: Use Ref for check to avoid dependency loop
+                    const currentSelected = selectedChatRef.current;
+                    if (currentSelected && normalizePhone(currentSelected._id) === normalizePhone(updatedChat._id)) {
+                        updatedChat.unreadCount = 0;
+                    } else {
                         updatedChat.unreadCount = (updatedChat.unreadCount || 0) + 1;
                     }
+
                     return newList;
                 } else {
-                    // Force refresh to get correct naming from backend
-                    fetchConversations();
+                    // ❌ REMOVED SIDE EFFECT: fetchConversations() inside setter
+                    // Ideally we should just append it or trigger a fetch outside.
+                    // For now, let's just ignore to prevent crash/loop.
                     return prev;
                 }
             });
 
             // If chat is open, handle message list
-            if (selectedChat && normalizePhone(selectedChat._id) === normalizePhone(incomingMsg.remoteJid)) {
+            const currentSelected = selectedChatRef.current;
+            if (currentSelected && normalizePhone(currentSelected._id) === normalizePhone(incomingMsg.remoteJid)) {
                 setMessages(prev => {
                     // 1. Robust Deduplication
-                    const exists = prev.some(m =>
-                        m._id === incomingMsg._id ||
-                        m.msgId === incomingMsg.msgId ||
-                        (m.key && m.key.id === incomingMsg.msgId)
-                    );
+                    const exists = prev.some(m => {
+                        // Check exact ID match
+                        if (m._id === incomingMsg._id ||
+                            m.msgId === incomingMsg.msgId ||
+                            (m.key && m.key.id === incomingMsg.msgId)) {
+                            return true;
+                        }
+
+                        // Check Content + Timestamp proximity (Fallback for ID mismatch)
+                        // If same content, same sender, and time diff < 5 seconds
+                        const timeDiff = Math.abs(new Date(m.timestamp).getTime() - new Date(incomingMsg.timestamp).getTime());
+                        if (m.content === incomingMsg.content &&
+                            m.fromMe === incomingMsg.fromMe &&
+                            timeDiff < 5000) {
+                            return true;
+                        }
+
+                        return false;
+                    });
 
                     if (exists) return prev;
 
@@ -385,7 +446,7 @@ export default function LiveChat() {
                     setTimeout(scrollToBottom, 50);
 
                     if (!incomingMsg.fromMe) {
-                        markAsRead(selectedChat._id);
+                        markAsRead(selectedChat);
                     }
                     return [...prev, incomingMsg];
                 });
@@ -402,6 +463,25 @@ export default function LiveChat() {
                 }
                 return m;
             }));
+        });
+
+        socketRef.current.on('message_reaction', (data) => {
+            // console.log('❤️ Reaction Update:', data);
+            setMessages(prev => prev.map(m => {
+                if (m.msgId === data.msgId || (m.key && m.key.id === data.msgId)) {
+                    return { ...m, reactions: data.reactions };
+                }
+                return m;
+            }));
+        });
+
+        // ✅ Listen for Presence Updates (Typing/Online)
+        socketRef.current.on('presence_update', (data) => {
+            setPresenceMap(prev => {
+                const newMap = { ...prev };
+                newMap[data.chatJid] = data.presences;
+                return newMap;
+            });
         });
 
         socketRef.current.on('message_revoked', (data) => {
@@ -456,21 +536,35 @@ export default function LiveChat() {
         }
     }, [location.state, conversations, isLoadingChats]);
 
+    // Mark read when selecting chat
+    useEffect(() => {
+        if (selectedChat && selectedChat.unreadCount > 0) {
+            console.log('👀 [READ] Marking chat as read:', selectedChat.displayName);
+
+            // 1. Backend Call
+            markAsRead(selectedChat);
+
+            // 2. Immediate Local Update (Fix Persistence)
+            setConversations(prev => prev.map(c =>
+                normalizePhone(c._id) === normalizePhone(selectedChat._id) ? { ...c, unreadCount: 0 } : c
+            ));
+
+            // 3. Update Selected Chat State too
+            setSelectedChat(prev => ({ ...prev, unreadCount: 0 }));
+        }
+    }, [selectedChat, markAsRead]);
+
     // Fetch Messages when chat selected
     useEffect(() => {
         if (!selectedChat) return;
 
-        // 1. Mark as read
-        if (selectedChat.unreadCount > 0) {
-            markAsRead(selectedChat._id);
-        }
-
         const fetchMessages = async () => {
             setIsLoadingMessages(true);
             try {
-                const { data } = await axios.get(`/chats/${selectedChat._id}?limit=100`);
+                const { data } = await axios.get(`/chats/${selectedChat._id}?limit=50`);
                 if (data.success) {
                     setMessages(data.data);
+                    setHasMoreMessages(data.data.length >= 50); // Assume limit is 50
                     // Force scroll nicely
                     setTimeout(() => scrollToBottom(), 100);
                 }
@@ -483,9 +577,63 @@ export default function LiveChat() {
         };
 
         fetchMessages();
-    }, [selectedChat, markAsRead]);
+    }, [selectedChat]);
 
-    // Auto-scroll on new messages
+    // Lazy Load Function
+    const loadMoreMessages = async () => {
+        if (!selectedChat || isLoadingMore || !hasMoreMessages || messages.length === 0) return;
+
+        setIsLoadingMore(true);
+        const oldestMessage = messages[0];
+        const beforeTimestamp = oldestMessage.timestamp;
+
+        // Capture current scroll height before update
+        const container = chatContainerRef.current;
+        const previousHeight = container.scrollHeight;
+        const previousTop = container.scrollTop;
+
+        try {
+            const { data } = await axios.get(`/chats/${selectedChat._id}?limit=50&before=${beforeTimestamp}`);
+
+            if (data.success && data.data.length > 0) {
+                // Prepend new messages
+                setMessages(prev => [...data.data, ...prev]);
+
+                // Determine if there are even more
+                if (data.data.length < 50) {
+                    setHasMoreMessages(false);
+                }
+
+                // Restore scroll position after DOM update
+                // We need to wait for layout repaint
+                // Restore scroll position after DOM update
+                // We need to wait for layout repaint - setTimeout(0) is more reliable than rAF here due to React batching
+                setTimeout(() => {
+                    if (container) {
+                        const newHeight = container.scrollHeight;
+                        container.scrollTop = newHeight - previousHeight;
+                    }
+                }, 0);
+
+            } else {
+                setHasMoreMessages(false);
+            }
+        } catch (err) {
+            console.error('Failed to load more messages', err);
+        } finally {
+            setIsLoadingMore(false);
+        }
+    };
+
+    // Scroll Handler
+    const handleScroll = (e) => {
+        const { scrollTop } = e.target;
+        if (scrollTop === 0 && hasMoreMessages && !isLoadingMore) {
+            loadMoreMessages();
+        }
+    };
+
+    // Auto-scroll on new messages (Only if near bottom OR if it's the initial load)
     useEffect(() => {
         scrollToBottom();
     }, [messages]);
@@ -550,6 +698,14 @@ export default function LiveChat() {
 
             toast.success(`Kontak ${saveContactName} berhasil disimpan!`);
             setIsSaveContactModalOpen(false);
+
+            // ✅ IMMEDIATE UPDATE: Manually update selectedChat state to hide SAVE button
+            setSelectedChat(prev => ({
+                ...prev,
+                isSaved: true,
+                displayName: saveContactName.trim()
+            }));
+
             fetchConversations();
         } catch (err) {
             toast.error(err.response?.data?.message || 'Gagal menyimpan kontak');
@@ -557,76 +713,68 @@ export default function LiveChat() {
     };
 
     const handleStartNewChat = async () => {
-        if (!newChatPhone.trim()) {
-            toast.error('Masukkan nomor telepon');
+        if (!newChatNumber) return;
+
+        let formatted = newChatNumber.replace(/\D/g, '');
+        if (formatted.startsWith('0')) formatted = '62' + formatted.substring(1);
+        if (formatted.startsWith('8')) formatted = '62' + formatted;
+
+        if (formatted.length < 5) {
+            toast.error('Nomor tidak valid');
             return;
         }
 
-        // Normalize
-        let phone = newChatPhone.replace(/\D/g, '');
-        if (phone.startsWith('0')) phone = '62' + phone.substring(1);
-        if (phone.startsWith('8')) phone = '62' + phone;
+        // Check if exists in conversations
+        const existing = conversations.find(c => normalizePhone(c._id) === formatted);
 
-        if (phone.length < 10) {
-            toast.error('Nomor telepon tidak valid');
-            return;
-        }
-
-        const jid = phone + '@s.whatsapp.net';
-
-        // AUTO-SAVE LOGIC
-        if (newChatName.trim()) {
-            try {
-                await axios.post('/customers', {
-                    name: newChatName.trim(),
-                    phone: phone,
-                    jid: jid
-                });
-                toast.success('Kontak tersimpan otomatis via New Chat');
-            } catch (err) {
-                // Ignore error (maybe duplicate, just proceed to chat)
-                console.log('Auto-save skipped/failed', err);
-            }
-        }
-
-        const displayTitle = newChatName.trim() || `+${phone}`;
-
-        // Check if exists
-        const existing = conversations.find(c => c._id === jid);
         if (existing) {
-            // Update name in local view if newly saved
-            if (newChatName.trim()) existing.displayName = newChatName.trim();
             setSelectedChat(existing);
         } else {
-            // Create temp
+            // Create temporary chat object for UI
             const newChat = {
-                _id: jid,
-                displayName: displayTitle,
-                cleanPhone: phone,
-                lastMessage: null,
+                _id: `${formatted}@s.whatsapp.net`,
+                cleanPhone: formatted,
+                displayName: `+${formatted}`,
                 unreadCount: 0,
-                allMessages: []
+                isSaved: false,
+                lastMessage: null,
+                hasStandardJid: true
             };
+            // Add to list optimistically
             setConversations(prev => [newChat, ...prev]);
             setSelectedChat(newChat);
         }
 
         setIsNewChatModalOpen(false);
-        setNewChatPhone('');
-        setNewChatName('');
+        setNewChatNumber('');
+    };
+
+    // --- REPLY HANDLERS ---
+    const handleReply = (msg) => {
+        setReplyingTo(msg);
+        // Focus input (optional but good UX)
+        // document.querySelector('textarea')?.focus();
+    };
+
+    const cancelReply = () => {
+        setReplyingTo(null);
     };
 
     const handleSendMessage = async (e) => {
         e.preventDefault();
-        if (!inputText.trim() || !selectedChat) return;
+        if ((!inputText.trim() && !selectedImage) || !selectedChat) return;
 
-        const tempId = Date.now().toString();
+        const tempId = `temp-${Date.now()}`;
+        const content = inputText;
         const tempMsg = {
             _id: tempId,
-            content: inputText,
+            key: { id: tempId },
+            msgId: tempId,
+            content: content,
             fromMe: true,
             timestamp: new Date().toISOString(),
-            status: 'pending'
+            status: 'pending',
+            remoteJid: selectedChat._id
         };
 
         // Optimistic Update
@@ -634,35 +782,47 @@ export default function LiveChat() {
         setInputText('');
         scrollToBottom();
 
-        // Move conversation to top
-        setConversations(prev => {
-            const newList = [...prev];
-            const index = newList.findIndex(c => c._id === selectedChat._id);
-            if (index !== -1) {
-                const item = newList.splice(index, 1)[0];
-                item.lastMessage = tempMsg;
-                newList.unshift(item);
-                return newList;
-            }
-            return prev;
-        });
-
         try {
-            const { data } = await axios.post(`/chats/${selectedChat._id}/send`, {
-                message: tempMsg.content
-            });
+            const payload = {
+                message: content,
+                quotedMsgId: replyingTo ? (replyingTo.msgId || (replyingTo.key && replyingTo.key.id)) : null
+            };
+
+            // Clear reply state
+            if (replyingTo) setReplyingTo(null);
+
+            const { data } = await axios.post(`/chats/${selectedChat._id}/send`, payload);
 
             if (data.success) {
-                // Update the temp message with real ID and Status
+                // Update temp message
                 setMessages(prev => prev.map(m =>
-                    m._id === tempId ? { ...m, status: 'sent', _id: data.data.id, key: { id: data.data.id } } : m
+                    m._id === tempId ? { ...m, ...data.data, status: 'sent', _id: data.data.id, msgId: data.data.id, key: { id: data.data.id } } : m
                 ));
             }
+
+
         } catch (err) {
             console.error('Send failed', err);
             const errMsg = err.response?.data?.details || err.message || 'Gagal mengirim pesan';
             toast.error(errMsg);
             setMessages(prev => prev.filter(m => m._id !== tempId));
+        }
+    };
+
+    const handleSendReaction = async (msg, emoji) => {
+        try {
+            // Optimistic Update (Optional, waiting for socket is safer usually, but let's try strict socket reliance first)
+            // Actually, for better UX let's wait for socket.
+
+            await axios.post(`/chats/${selectedChat._id}/react`, {
+                msgId: msg.msgId || (msg.key && msg.key.id),
+                emoji,
+                fromMe: msg.fromMe,
+                participant: msg.participant
+            });
+        } catch (error) {
+            console.error('Failed to react:', error);
+            toast.error('Failed to send reaction');
         }
     };
 
@@ -770,7 +930,14 @@ export default function LiveChat() {
                             return (
                                 <div
                                     key={chat._id}
-                                    onClick={() => setSelectedChat(chat)}
+                                    onClick={() => {
+                                        if (selectedChat?._id !== chat._id) {
+                                            setMessages([]); // ✅ IMMEDATE CLEAR (Fixes Lag/Ghosting)
+                                            setHasMoreMessages(false);
+                                            setIsLoadingMessages(true);
+                                            setSelectedChat(chat);
+                                        }
+                                    }}
                                     className={`p-4 flex gap-3 cursor-pointer transition-colors border-b border-gray-50 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-[#202c33]
                                 ${isActive ? 'bg-primary-50/50 dark:bg-[#2a3942] border-r-4 border-r-primary-500' : ''}
                             `}
@@ -849,9 +1016,6 @@ export default function LiveChat() {
 
                                 <div className="flex flex-col justify-center">
                                     <div className="flex items-center gap-2">
-                                        <h3 className="font-bold text-navy-900 dark:text-white text-sm leading-tight truncate max-w-[150px] md:max-w-xs">
-                                            {selectedChat.displayName || 'Unknown Contact'}
-                                        </h3>
                                         {/* Header Tags */}
                                         <div className="flex gap-1 shrink-0">
                                             {getTagsForChat(selectedChat).map((tag, i) => {
@@ -878,12 +1042,45 @@ export default function LiveChat() {
                                             <Edit className="w-4 h-4" />
                                         </button>
                                     </div>
-                                    <p className="text-xs text-green-600 font-medium truncate">
-                                        {selectedChat.cleanPhone ? `+${selectedChat.cleanPhone}` : '(Nomor tidak tersedia)'}
-                                    </p>
+
+                                    {/* CHAT IDENTITY HEADER */}
+                                    <div className="flex flex-col justify-center">
+                                        <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2 text-base">
+                                            {selectedChat.displayName || (selectedChat.cleanPhone ? `+${selectedChat.cleanPhone}` : 'Unknown Contact')}
+                                            {selectedChat.isSaved && selectedChat.hasStandardJid && (
+                                                <span className="p-0.5 bg-green-100 dark:bg-green-900 rounded">
+                                                    <MessageSquare size={12} className="text-green-600 dark:text-green-400" />
+                                                </span>
+                                            )}
+                                        </h3>
+                                        <p className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-2">
+                                            {/* Subtitle: ~PushName or Number */}
+                                            {!selectedChat.isSaved && selectedChat.pushName ? (
+                                                <span className="italic text-gray-400">~{selectedChat.pushName}</span>
+                                            ) : (
+                                                <span>{selectedChat.cleanPhone ? `+${selectedChat.cleanPhone}` : ''}</span>
+                                            )}
+
+                                            {/* Presence Indicator */}
+                                            {(() => {
+                                                const rawJid = selectedChat._id;
+                                                const presence = presenceMap[rawJid];
+                                                if (presence) {
+                                                    const participantValues = Object.values(presence);
+                                                    if (participantValues.length > 0) {
+                                                        const p = participantValues[0];
+                                                        if (p.lastKnownPresence === 'composing') return <span className="text-green-500 font-bold animate-pulse ml-2">sedang mengetik...</span>;
+                                                        if (p.lastKnownPresence === 'recording') return <span className="text-green-500 font-bold animate-pulse ml-2">merekam suara...</span>;
+                                                        if (p.lastKnownPresence === 'available') return <span className="text-green-500 font-bold ml-2">• Online</span>;
+                                                    }
+                                                }
+                                                return null;
+                                            })()}
+                                        </p>
+                                    </div>
                                 </div>
 
-                                {/* QUICK SAVE TO CUSTOMER */}
+                                {/* QUICK SAVE BUTTON */}
                                 {selectedChat && !selectedChat.isSaved && !selectedChat.displayName?.includes('(') && (
                                     <button
                                         onClick={handleSaveContactClick}
@@ -895,8 +1092,6 @@ export default function LiveChat() {
                                     </button>
                                 )}
                             </div>
-
-
 
                             <div className="flex items-center gap-2 text-gray-500 dark:text-gray-400 relative" ref={menuRef}>
                                 {isMessageSearchOpen ? (
@@ -952,7 +1147,17 @@ export default function LiveChat() {
                         </div>
 
                         {/* Messages Area */}
-                        <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-3 z-0 custom-scrollbar bg-[#efeae2] dark:bg-[#0b141a]">
+                        <div
+                            ref={chatContainerRef}
+                            onScroll={handleScroll}
+                            className="flex-1 overflow-y-auto p-4 md:p-6 space-y-3 z-0 custom-scrollbar bg-[#efeae2] dark:bg-[#0b141a]"
+                        >
+                            {/* Loading More Spinner */}
+                            {isLoadingMore && (
+                                <div className="flex justify-center py-2">
+                                    <div className="w-6 h-6 border-2 border-primary-500 border-t-transparent rounded-full animate-spin"></div>
+                                </div>
+                            )}
                             {filteredMessages.length === 0 && messageSearchQuery ? (
                                 <div className="flex flex-col items-center justify-center h-full text-gray-400">
                                     <Search className="w-12 h-12 mb-2 opacity-20" />
@@ -1067,7 +1272,7 @@ export default function LiveChat() {
                                                             {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}
                                                         </span>
                                                         {msg.fromMe && (
-                                                            <span className={`relative top-[3px] ${msg.status === 'read' ? 'text-[#53bdeb]' : 'text-gray-400'}`}>
+                                                            <span className={`relative top-[3px] ml-1 ${msg.status === 'read' ? 'text-blue-500' : 'text-gray-400'}`}>
                                                                 {/* 
                                                                     1. Single Grey Tick: Sent / Pending (Offline)
                                                                     2. Double Grey Tick: Delivered (Online but not read)
@@ -1086,6 +1291,71 @@ export default function LiveChat() {
                                                 </div>
                                             </div>
                                         )}
+
+                                        {/* HOVER ACTIONS: REPLY & REACT */}
+                                        <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 z-10 bg-white/80 dark:bg-black/40 rounded-full p-0.5 shadow-sm">
+                                            {/* REACTION BUTTON WITH MENU */}
+                                            <div className="relative group/reaction">
+                                                <button
+                                                    className="p-1 rounded-full text-gray-500 hover:text-yellow-500 transition-colors"
+                                                    title="React"
+                                                >
+                                                    <Smile size={14} />
+                                                </button>
+                                                {/* EMOJI MENU (Hover) */}
+                                                <div className="absolute bottom-full mb-2 right-0 hidden group-hover/reaction:flex bg-white dark:bg-gray-800 rounded-full shadow-lg border border-gray-100 dark:border-gray-700 p-1 gap-1 animate-in zoom-in-95 duration-200 z-50">
+                                                    {['👍', '❤️', '😂', '😮', '😢', '🙏'].map(emoji => (
+                                                        <button
+                                                            key={emoji}
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                handleSendReaction(msg, emoji);
+                                                            }}
+                                                            className="hover:scale-125 transition-transform text-lg p-1"
+                                                        >
+                                                            {emoji}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </div>
+
+                                            <button
+                                                onClick={() => handleReply(msg)}
+                                                className="p-1 rounded-full text-gray-500 hover:text-primary-500 transition-colors"
+                                                title="Reply"
+                                            >
+                                                <Reply size={14} />
+                                            </button>
+                                        </div>
+
+                                        {/* REACTIONS DISPLAY */}
+                                        {msg.reactions && msg.reactions.length > 0 && (
+                                            <div className="absolute -bottom-2 right-2 bg-white dark:bg-gray-800 rounded-full px-1.5 py-0.5 shadow-sm border border-gray-200 dark:border-gray-700 flex items-center gap-1 text-[10px] z-10 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+                                                {(() => {
+                                                    // Group reactions by text
+                                                    const counts = {};
+                                                    msg.reactions.forEach(r => {
+                                                        counts[r.text] = (counts[r.text] || 0) + 1;
+                                                    });
+                                                    // Get top 3
+                                                    const sortedEmojis = Object.keys(counts).sort((a, b) => counts[b] - counts[a]).slice(0, 3);
+
+                                                    return (
+                                                        <>
+                                                            {sortedEmojis.map(emoji => (
+                                                                <span key={emoji}>{emoji}</span>
+                                                            ))}
+                                                            {msg.reactions.length > 1 && (
+                                                                <span className="text-gray-500 dark:text-gray-400 font-medium ml-0.5">
+                                                                    {msg.reactions.length}
+                                                                </span>
+                                                            )}
+                                                        </>
+                                                    )
+                                                })()}
+                                            </div>
+                                        )}
+
                                     </div>
                                 </div>
                             ))}
@@ -1093,7 +1363,7 @@ export default function LiveChat() {
                         </div>
 
                         {/* Input Area */}
-                        <div className="px-2 py-2 md:px-4 md:py-3 bg-[#f0f2f5] border-t border-gray-200 z-10 w-full">
+                        <div className="px-2 py-2 md:px-4 md:py-3 bg-[#f0f2f5] border-t border-gray-200 z-10 w-full relative">
                             <div className="max-w-4xl mx-auto flex items-end gap-2 relative">
 
                                 {/* ATTACHMENT BUTTON & MENU */}
@@ -1144,6 +1414,25 @@ export default function LiveChat() {
                                         onChange={handleFileSelect}
                                     />
                                 </div>
+
+
+
+                                {/* REPLY BANNER */}
+                                {replyingTo && (
+                                    <div className="absolute bottom-full left-0 right-0 mx-2 mb-2 bg-white dark:bg-[#1f2c33] border-l-[4px] border-[#00a884] rounded-lg shadow-[0_-2px_5px_rgba(0,0,0,0.05)] p-2 flex justify-between items-center z-20 animate-in slide-in-from-bottom-2 duration-200">
+                                        <div className="flex flex-col overflow-hidden w-full mr-4 text-sm">
+                                            <span className="font-bold text-[#00a884] mb-0.5">
+                                                {replyingTo.fromMe ? 'Anda' : (replyingTo.pushName || 'User')}
+                                            </span>
+                                            <p className="text-gray-500 dark:text-gray-300 truncate">
+                                                {replyingTo.content}
+                                            </p>
+                                        </div>
+                                        <button onClick={cancelReply} className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full text-gray-400">
+                                            <X size={18} />
+                                        </button>
+                                    </div>
+                                )}
 
                                 {/* INPUT FORM OR RECORDER UI */}
                                 {isRecording ? (
@@ -1217,278 +1506,273 @@ export default function LiveChat() {
                             </div>
                         </div>
 
-
-
                     </>
                 ) : (
                     <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
-                        <div className="w-40 h-40 bg-gray-100 rounded-full flex items-center justify-center mb-6 shadow-inner">
+                        <div className="w-40 h-40 bg-gray-100 rounded-lg flex items-center justify-center mb-6 shadow-sm">
                             <MessageSquare className="w-16 h-16 text-gray-300" />
                         </div>
-                        <h3 className="text-xl md:text-2xl font-bold text-navy-900 mb-2">Selamat Datang di Live Chat</h3>
+                        <h3 className="text-xl md:text-2xl font-bold text-navy-900 mb-2">Selamat Datang di WhatsApp</h3>
                         <p className="text-gray-500 max-w-sm leading-relaxed">
-                            Pilih percakapan dari daftar di sebelah kiri untuk mulai mengirim pesan secara real-time.
+                            Kirim dan terima pesan tanpa perlu menautkan telepon agar tetap online.
                         </p>
                         <div className="mt-8 flex gap-4 text-xs text-gray-400 font-medium tracking-wide uppercase">
                             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500"></span> Online</span>
-                            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-primary-500"></span> Real-time</span>
-                            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-navy-900"></span> Secure</span>
                         </div>
                     </div>
-                )
-                }
+                )}
 
-            </div >
-
-            {/* Save Contact Modal */}
-            {
-                isSaveContactModalOpen && (
-                    <div className="fixed inset-0 bg-navy-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
-                        <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200 border border-white/20">
-                            {/* Header */}
-                            <div className="bg-navy-900 px-6 py-5 relative overflow-hidden">
-                                <div className="absolute top-0 right-0 w-24 h-24 bg-primary-500/10 rounded-full blur-2xl -translate-y-1/2 translate-x-1/2"></div>
-                                <div className="flex items-center justify-between relative z-10">
-                                    <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                                        <UserPlus className="w-5 h-5 text-primary-400" />
-                                        Simpan Kontak
-                                    </h3>
-                                    <button
-                                        onClick={() => setIsSaveContactModalOpen(false)}
-                                        className="p-1 hover:bg-white/10 rounded-lg text-gray-400 hover:text-white transition-colors"
-                                    >
-                                        <X className="w-5 h-5" />
-                                    </button>
-                                </div>
-                            </div>
-
-                            {/* Body */}
-                            <div className="p-6 space-y-5">
-                                <div className="space-y-1.5">
-                                    <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide ml-1">Nomor Telepon</label>
-                                    <input
-                                        type="text"
-                                        value={saveContactPhone}
-                                        onChange={e => setSaveContactPhone(e.target.value)}
-                                        className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl font-mono text-gray-600 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-all"
-                                        placeholder="+62..."
-                                    />
+                {/* Save Contact Modal */}
+                {
+                    isSaveContactModalOpen && (
+                        <div className="fixed inset-0 bg-navy-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
+                            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200 border border-white/20">
+                                {/* Header */}
+                                <div className="bg-navy-900 px-6 py-5 relative overflow-hidden">
+                                    <div className="absolute top-0 right-0 w-24 h-24 bg-primary-500/10 rounded-full blur-2xl -translate-y-1/2 translate-x-1/2"></div>
+                                    <div className="flex items-center justify-between relative z-10">
+                                        <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                                            <UserPlus className="w-5 h-5 text-primary-400" />
+                                            Simpan Kontak
+                                        </h3>
+                                        <button
+                                            onClick={() => setIsSaveContactModalOpen(false)}
+                                            className="p-1 hover:bg-white/10 rounded-lg text-gray-400 hover:text-white transition-colors"
+                                        >
+                                            <X className="w-5 h-5" />
+                                        </button>
+                                    </div>
                                 </div>
 
-                                <div className="space-y-1.5">
-                                    <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide ml-1">Nama Lengkap</label>
-                                    <input
-                                        autoFocus
-                                        type="text"
-                                        value={saveContactName}
-                                        onChange={(e) => setSaveContactName(e.target.value)}
-                                        className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl font-medium text-navy-900 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-all placeholder-gray-300"
-                                        placeholder="Masukkan nama kontak..."
-                                        onKeyDown={(e) => {
-                                            if (e.key === 'Enter') handleSaveContactConfirm();
-                                        }}
-                                    />
-                                </div>
-
-                                {/* TAGS INPUT */}
-                                <div className="space-y-1.5">
-                                    <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide ml-1">Tags (Opsional)</label>
-                                    <div className="flex gap-2">
+                                {/* Body */}
+                                <div className="p-6 space-y-5">
+                                    <div className="space-y-1.5">
+                                        <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide ml-1">Nomor Telepon</label>
                                         <input
                                             type="text"
-                                            value={saveContactTagInput}
-                                            onChange={(e) => setSaveContactTagInput(e.target.value)}
+                                            value={saveContactPhone}
+                                            onChange={e => setSaveContactPhone(e.target.value)}
+                                            className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl font-mono text-gray-600 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-all"
+                                            placeholder="+62..."
+                                        />
+                                    </div>
+
+                                    <div className="space-y-1.5">
+                                        <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide ml-1">Nama Lengkap</label>
+                                        <input
+                                            autoFocus
+                                            type="text"
+                                            value={saveContactName}
+                                            onChange={(e) => setSaveContactName(e.target.value)}
+                                            className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl font-medium text-navy-900 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-all placeholder-gray-300"
+                                            placeholder="Masukkan nama kontak..."
                                             onKeyDown={(e) => {
-                                                if (e.key === 'Enter') {
-                                                    e.preventDefault();
+                                                if (e.key === 'Enter') handleSaveContactConfirm();
+                                            }}
+                                        />
+                                    </div>
+
+                                    {/* TAGS INPUT */}
+                                    <div className="space-y-1.5">
+                                        <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide ml-1">Tags (Opsional)</label>
+                                        <div className="flex gap-2">
+                                            <input
+                                                type="text"
+                                                value={saveContactTagInput}
+                                                onChange={(e) => setSaveContactTagInput(e.target.value)}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Enter') {
+                                                        e.preventDefault();
+                                                        if (saveContactTagInput.trim() && !saveContactTags.includes(saveContactTagInput.trim())) {
+                                                            setSaveContactTags([...saveContactTags, saveContactTagInput.trim()]);
+                                                            setSaveContactTagInput('');
+                                                        }
+                                                    }
+                                                }}
+                                                className="flex-1 px-4 py-3 bg-white border border-gray-200 rounded-xl font-medium text-navy-900 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-all placeholder-gray-300"
+                                                placeholder="Ketik tag & enter..."
+                                            />
+                                            <button
+                                                onClick={() => {
                                                     if (saveContactTagInput.trim() && !saveContactTags.includes(saveContactTagInput.trim())) {
                                                         setSaveContactTags([...saveContactTags, saveContactTagInput.trim()]);
                                                         setSaveContactTagInput('');
                                                     }
-                                                }
-                                            }}
-                                            className="flex-1 px-4 py-3 bg-white border border-gray-200 rounded-xl font-medium text-navy-900 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-all placeholder-gray-300"
-                                            placeholder="Ketik tag & enter..."
-                                        />
-                                        <button
-                                            onClick={() => {
-                                                if (saveContactTagInput.trim() && !saveContactTags.includes(saveContactTagInput.trim())) {
-                                                    setSaveContactTags([...saveContactTags, saveContactTagInput.trim()]);
-                                                    setSaveContactTagInput('');
-                                                }
-                                            }}
-                                            disabled={!saveContactTagInput.trim()}
-                                            className="px-4 py-3 bg-primary-50 text-primary-600 rounded-xl font-bold hover:bg-primary-100 transition-colors disabled:opacity-50"
-                                        >
-                                            <Plus className="w-5 h-5" />
-                                        </button>
-                                    </div>
-
-                                    {/* Quick Selection */}
-                                    <div className="flex flex-wrap gap-2 mt-2">
-                                        {['Royal', 'Gold', 'Platinum', 'VIP'].map(tag => (
-                                            <button
-                                                key={tag}
-                                                onClick={() => {
-                                                    if (!saveContactTags.includes(tag)) {
-                                                        setSaveContactTags([...saveContactTags, tag]);
-                                                    }
                                                 }}
-                                                disabled={saveContactTags.includes(tag)}
-                                                className={`text-[10px] uppercase font-bold px-2 py-1 rounded-lg border transition-all 
+                                                disabled={!saveContactTagInput.trim()}
+                                                className="px-4 py-3 bg-primary-50 text-primary-600 rounded-xl font-bold hover:bg-primary-100 transition-colors disabled:opacity-50"
+                                            >
+                                                <Plus className="w-5 h-5" />
+                                            </button>
+                                        </div>
+
+                                        {/* Quick Selection */}
+                                        <div className="flex flex-wrap gap-2 mt-2">
+                                            {['Royal', 'Gold', 'Platinum', 'VIP'].map(tag => (
+                                                <button
+                                                    key={tag}
+                                                    onClick={() => {
+                                                        if (!saveContactTags.includes(tag)) {
+                                                            setSaveContactTags([...saveContactTags, tag]);
+                                                        }
+                                                    }}
+                                                    disabled={saveContactTags.includes(tag)}
+                                                    className={`text-[10px] uppercase font-bold px-2 py-1 rounded-lg border transition-all 
                                                     ${tag === 'Royal' ? 'bg-purple-50 text-purple-600 border-purple-100 hover:bg-purple-100' :
-                                                        tag === 'Gold' ? 'bg-amber-50 text-amber-600 border-amber-100 hover:bg-amber-100' :
-                                                            tag === 'Platinum' ? 'bg-slate-50 text-slate-600 border-slate-100 hover:bg-slate-100' :
-                                                                'bg-rose-50 text-rose-600 border-rose-100 hover:bg-rose-100'}
+                                                            tag === 'Gold' ? 'bg-amber-50 text-amber-600 border-amber-100 hover:bg-amber-100' :
+                                                                tag === 'Platinum' ? 'bg-slate-50 text-slate-600 border-slate-100 hover:bg-slate-100' :
+                                                                    'bg-rose-50 text-rose-600 border-rose-100 hover:bg-rose-100'}
                                                     ${saveContactTags.includes(tag) ? 'opacity-50 cursor-not-allowed' : ''}
                                                 `}
-                                            >
-                                                {tag}
-                                            </button>
-                                        ))}
-                                    </div>
-
-                                    {/* Active Tags */}
-                                    {saveContactTags.length > 0 && (
-                                        <div className="flex flex-wrap gap-2 mt-2 p-3 bg-gray-50 rounded-xl border border-gray-100">
-                                            {saveContactTags.map((tag, idx) => (
-                                                <span key={idx} className="flex items-center gap-1 pl-2 pr-1 py-1 bg-white border border-gray-200 rounded-lg text-xs font-medium text-gray-700 shadow-sm">
+                                                >
                                                     {tag}
-                                                    <button
-                                                        onClick={() => setSaveContactTags(saveContactTags.filter(t => t !== tag))}
-                                                        className="p-0.5 hover:bg-red-50 hover:text-red-500 rounded-md transition-colors"
-                                                    >
-                                                        <X className="w-3 h-3" />
-                                                    </button>
-                                                </span>
+                                                </button>
                                             ))}
                                         </div>
-                                    )}
-                                </div>
 
-                                <div className="pt-2 flex gap-3">
-                                    <button
-                                        onClick={() => setIsSaveContactModalOpen(false)}
-                                        className="flex-1 py-2.5 bg-gray-100 text-gray-600 rounded-xl font-bold hover:bg-gray-200 transition-colors"
-                                    >
-                                        Batal
-                                    </button>
-                                    <button
-                                        onClick={handleSaveContactConfirm}
-                                        disabled={!saveContactName.trim()}
-                                        className="flex-1 py-2.5 bg-navy-900 text-white rounded-xl font-bold hover:bg-navy-800 transition-all shadow-lg shadow-navy-900/10 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                                    >
-                                        <Save className="w-4 h-4" />
-                                        Simpan
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                )
-            }
-
-            {/* Delete Chat Modal */}
-            {/* LIGHTBOX MODAL */}
-            {
-                selectedImage && (
-                    <div
-                        className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4"
-                        onClick={() => setSelectedImage(null)}
-                    >
-                        <div className="relative max-w-full max-h-full">
-                            <button
-                                className="absolute -top-10 right-0 text-white hover:text-gray-300 transition-colors p-2"
-                                onClick={() => setSelectedImage(null)}
-                            >
-                                <X size={32} />
-                            </button>
-                            <img
-                                src={selectedImage}
-                                alt="Full Preview"
-                                className="max-w-full max-h-[90vh] object-contain rounded-md shadow-2xl"
-                                onClick={(e) => e.stopPropagation()} // Prevent closing when clicking image
-                            />
-                        </div>
-                    </div>
-                )
-            }
-
-            <DeleteConfirm
-                open={showDeleteModal}
-                onClose={() => setShowDeleteModal(false)}
-                onConfirm={confirmDeleteChat}
-                title="Hapus Percakapan"
-                message={`Yakin ingin menghapus riwayat chat dengan ${selectedChat?.displayName || 'Unknown Contact'}? Pesan akan hilang permanen dan tidak dapat dipulihkan.`}
-                isLoading={isDeletingChat}
-            />
-            {/* NEW CHAT MODAL */}
-            {
-                isNewChatModalOpen && (
-                    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-                        <div className="bg-white rounded-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-200">
-                            <div className="p-6">
-                                <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
-                                    <MessageSquare className="w-5 h-5 text-primary-500" />
-                                    Mulai Chat Baru
-                                </h3>
-
-                                <div className="space-y-4">
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Nomor Telepon</label>
-                                        <input
-                                            type="tel"
-                                            placeholder="Contoh: 08123456789"
-                                            className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none transition-all"
-                                            value={newChatPhone}
-                                            onChange={e => setNewChatPhone(e.target.value)}
-                                            autoFocus
-                                        />
-                                        <p className="text-xs text-gray-500 mt-1">Masukkan nomor WhatsApp tujuan</p>
+                                        {/* Active Tags */}
+                                        {saveContactTags.length > 0 && (
+                                            <div className="flex flex-wrap gap-2 mt-2 p-3 bg-gray-50 rounded-xl border border-gray-100">
+                                                {saveContactTags.map((tag, idx) => (
+                                                    <span key={idx} className="flex items-center gap-1 pl-2 pr-1 py-1 bg-white border border-gray-200 rounded-lg text-xs font-medium text-gray-700 shadow-sm">
+                                                        {tag}
+                                                        <button
+                                                            onClick={() => setSaveContactTags(saveContactTags.filter(t => t !== tag))}
+                                                            className="p-0.5 hover:bg-red-50 hover:text-red-500 rounded-md transition-colors"
+                                                        >
+                                                            <X className="w-3 h-3" />
+                                                        </button>
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        )}
                                     </div>
 
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Nama Kontak (Opsional)</label>
-                                        <input
-                                            type="text"
-                                            placeholder="Nama Pelanggan (Contoh: Irgi)"
-                                            className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none transition-all"
-                                            value={newChatName}
-                                            onChange={e => setNewChatName(e.target.value)}
-                                            onKeyDown={(e) => {
-                                                if (e.key === 'Enter') handleStartNewChat();
-                                            }}
-                                        />
-                                        <p className="text-xs text-gray-500 mt-1">Jika diisi, akan otomatis disimpan sebagai customer.</p>
-                                    </div>
-
-                                    <div className="flex gap-3 pt-2">
+                                    <div className="pt-2 flex gap-3">
                                         <button
-                                            onClick={() => setIsNewChatModalOpen(false)}
-                                            className="flex-1 px-4 py-2 border border-gray-200 text-gray-600 rounded-xl hover:bg-gray-50 font-medium transition-colors"
+                                            onClick={() => setIsSaveContactModalOpen(false)}
+                                            className="flex-1 py-2.5 bg-gray-100 text-gray-600 rounded-xl font-bold hover:bg-gray-200 transition-colors"
                                         >
                                             Batal
                                         </button>
                                         <button
-                                            onClick={handleStartNewChat}
-                                            className="flex-1 px-4 py-2 bg-primary-500 text-white rounded-xl hover:bg-primary-600 font-bold transition-colors shadow-lg shadow-primary-500/30"
+                                            onClick={handleSaveContactConfirm}
+                                            disabled={!saveContactName.trim()}
+                                            className="flex-1 py-2.5 bg-navy-900 text-white rounded-xl font-bold hover:bg-navy-800 transition-all shadow-lg shadow-navy-900/10 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                                         >
-                                            Mulai Chat
+                                            <Save className="w-4 h-4" />
+                                            Simpan
                                         </button>
                                     </div>
                                 </div>
                             </div>
                         </div>
-                    </div>
-                )
-            }
-            <TagManagementModal
-                isOpen={isTagModalOpen}
-                onClose={() => setIsTagModalOpen(false)}
-                customerId={getCustomerIdForChat(selectedChat)}
-                currentTags={getTagsForChat(selectedChat)}
-                onUpdate={handleTagsUpdated}
-            />
-        </div >
+                    )
+                }
+
+                {/* Delete Chat Modal */}
+                {/* LIGHTBOX MODAL */}
+                {
+                    selectedImage && (
+                        <div
+                            className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4"
+                            onClick={() => setSelectedImage(null)}
+                        >
+                            <div className="relative max-w-full max-h-full">
+                                <button
+                                    className="absolute -top-10 right-0 text-white hover:text-gray-300 transition-colors p-2"
+                                    onClick={() => setSelectedImage(null)}
+                                >
+                                    <X size={32} />
+                                </button>
+                                <img
+                                    src={selectedImage}
+                                    alt="Full Preview"
+                                    className="max-w-full max-h-[90vh] object-contain rounded-md shadow-2xl"
+                                    onClick={(e) => e.stopPropagation()} // Prevent closing when clicking image
+                                />
+                            </div>
+                        </div>
+                    )
+                }
+
+                <DeleteConfirm
+                    open={showDeleteModal}
+                    onClose={() => setShowDeleteModal(false)}
+                    onConfirm={confirmDeleteChat}
+                    title="Hapus Percakapan"
+                    message={`Yakin ingin menghapus riwayat chat dengan ${selectedChat?.displayName || 'Unknown Contact'}? Pesan akan hilang permanen dan tidak dapat dipulihkan.`}
+                    isLoading={isDeletingChat}
+                />
+                {/* NEW CHAT MODAL */}
+                {
+                    isNewChatModalOpen && (
+                        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+                            <div className="bg-white rounded-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-200">
+                                <div className="p-6">
+                                    <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
+                                        <MessageSquare className="w-5 h-5 text-primary-500" />
+                                        Mulai Chat Baru
+                                    </h3>
+
+                                    <div className="space-y-4">
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-1">Nomor Telepon</label>
+                                            <input
+                                                type="tel"
+                                                placeholder="Contoh: 08123456789"
+                                                className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none transition-all"
+                                                value={newChatPhone}
+                                                onChange={e => setNewChatPhone(e.target.value)}
+                                                autoFocus
+                                            />
+                                            <p className="text-xs text-gray-500 mt-1">Masukkan nomor WhatsApp tujuan</p>
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-1">Nama Kontak (Opsional)</label>
+                                            <input
+                                                type="text"
+                                                placeholder="Nama Pelanggan (Contoh: Irgi)"
+                                                className="w-full px-4 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none transition-all"
+                                                value={newChatName}
+                                                onChange={e => setNewChatName(e.target.value)}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Enter') handleStartNewChat();
+                                                }}
+                                            />
+                                            <p className="text-xs text-gray-500 mt-1">Jika diisi, akan otomatis disimpan sebagai customer.</p>
+                                        </div>
+
+                                        <div className="flex gap-3 pt-2">
+                                            <button
+                                                onClick={() => setIsNewChatModalOpen(false)}
+                                                className="flex-1 px-4 py-2 border border-gray-200 text-gray-600 rounded-xl hover:bg-gray-50 font-medium transition-colors"
+                                            >
+                                                Batal
+                                            </button>
+                                            <button
+                                                onClick={handleStartNewChat}
+                                                className="flex-1 px-4 py-2 bg-primary-500 text-white rounded-xl hover:bg-primary-600 font-bold transition-colors shadow-lg shadow-primary-500/30"
+                                            >
+                                                Mulai Chat
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )
+                }
+                <TagManagementModal
+                    isOpen={isTagModalOpen}
+                    onClose={() => setIsTagModalOpen(false)}
+                    customerId={getCustomerIdForChat(selectedChat)}
+                    currentTags={getTagsForChat(selectedChat)}
+                />
+            </div>
+        </div>
     );
-}
+};
+
+

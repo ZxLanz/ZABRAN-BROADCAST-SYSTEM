@@ -11,20 +11,29 @@ Zabran Broadcast System adalah alat pemasaran WhatsApp & CRM mandiri (self-hoste
 
 ### 📢 Broadcast Canggih (Pesan Massal)
 - **Kirim Bulk:** Kirim pesan ke ribuan pelanggan hanya dengan satu klik.
-- **Jeda Pintar (Smart Delay):** Penundaan acak yang cerdas untuk mencegah banned WhatsApp.
-- **Support Media:** Kirim Gambar, Video, dan Dokumen.
+- **Jeda Pintar (Smart Delay):** Penundaan acak custom untuk mencegah banned WhatsApp.
+- **Support Media:** Kirim Gambar, Video, Dokumen, dan Voice Note (Otomatis konversi ke OGG).
 - **Rate Limiting:** Melindungi nomor Anda dengan membatasi jumlah pesan per menit/jam.
 - **Variabel Dinamis:** Personalisasi pesan dengan menyapa nama pelanggan `{name}`, dll.
 
 ### 🤖 Otomatisasi & AI
 - **Auto-Reply:** Balasan otomatis berdasarkan kata kunci.
-- **Integrasi AI:** Terhubung dengan model AI (OpenRouter/Groq/Gemini) untuk balasan cerdas.
+- **Integrasi AI:** Terhubung dengan model AI (OpenRouter/Groq/Deepseek) untuk balasan cerdas.
+- **n8n Workflow:** Integrasi visual workflow untuk logika bisnis yang kompleks.
 - **Jadwal Kirim:** Rencanakan broadcast untuk tanggal dan waktu di masa depan.
+
+### 💬 Live Chat Pro (Real-Time)
+- **History Sync:** Sinkronisasi riwayat chat otomatis (seperti WhatsApp Web).
+- **Voice Note Recording:** Rekam dan kirim pesan suara langsung dari dashboard.
+- **Media Attachment:** Kirim foto, video, dan dokumen dengan mudah.
+- **Reply & React:** Fitur balas pesan (Reply) dan reaksi emoji.
+- **Search:** Pencarian pesan dan kontak yang cepat.
 
 ### 👥 Manajemen Pelanggan (CRM)
 - **Manajemen Kontak:** Import/Export kontak via Excel/CSV.
+- **Deduplikasi Pintar (Fuzzy Logic):** Mencegah duplikasi kontak dengan nama mirip (misal: "Akbar" vs "Akbr").
 - **Sistem Tagging:** Kelompokkan pelanggan (Royal, Gold, Platinum).
-- **Riwayat Lengkap:** Lihat seluruh riwayat chat dan broadcast per pelanggan.
+- **Profile Picture Caching:** Loading foto profil super cepat dengan sistem caching lokal.
 
 ### 🛡️ Keamanan & Performa
 - **Multi-Tenant:** Mendukung banyak akun admin (masing-masing punya sesi WhatsApp sendiri).
@@ -48,6 +57,7 @@ Sistem ini dibangun menggunakan teknologi web modern:
   - [MongoDB](https://www.mongodb.com/) (Database NoSQL).
   - [Baileys](https://github.com/WhiskeySockets/Baileys) (Koneksi WhatsApp Web API).
   - [Socket.io](https://socket.io/) (Komunikasi Real-time).
+  - [FFmpeg](https://ffmpeg.org/) (Konversi Audio & Video).
   - [PM2](https://pm2.keymetrics.io/) (Manajemen Proses).
 
 ---
@@ -112,7 +122,13 @@ Jika ada masalah, gunakan skrip `sare.bat` (Saint Restart).
 ```bash
 .\sare.bat
 ```
-Ini akan mematikan semua proses lalu menyalakannya kembali dengan bersih.
+Ini akan mematikan semua proses lalu menyalakannya kembali dengan bersih (dengan hitungan mundur).
+
+### Mematikan Sistem (Shutdown)
+Untuk mematikan seluruh sistem dengan aman:
+```bash
+.\kill.bat
+```
 
 ### Memantau Log (Monitor)
 Untuk melihat aktivitas sistem secara live:

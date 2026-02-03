@@ -81,6 +81,7 @@ customerSchema.index({ name: 1 });
 customerSchema.index({ tags: 1 });
 customerSchema.index({ status: 1 });
 customerSchema.index({ createdBy: 1 }); // ✅ NEW INDEX - Fast filtering by user
+customerSchema.index({ jids: 1 }); // ✅ NEW INDEX - Fast lookup for resolving LIDs
 
 const Customer = mongoose.model('Customer', customerSchema);
 

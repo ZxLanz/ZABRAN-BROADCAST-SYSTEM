@@ -18,9 +18,8 @@ module.exports = {
         },
         {
             name: "zabran-n8n",
-            script: "n8n.cmd",
+            script: "C:\\Users\\Asus\\AppData\\Roaming\\npm\\node_modules\\n8n\\bin\\n8n",
             args: "start",
-            interpreter: "none",
             env: {
                 N8N_PORT: 5678,
             },

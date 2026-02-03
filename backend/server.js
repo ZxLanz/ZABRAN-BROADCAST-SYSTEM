@@ -39,8 +39,9 @@ app.get('/debug/contacts/:userId', (req, res) => {
 
         res.json({
             count: keys.length,
-            irgi_match: irgi ? { jid: irgi, data: contacts[irgi] } : 'Not Found',
-            sample: keys.slice(0, 5).map(k => ({ jid: k, name: contacts[k].name, notify: contacts[k].notify }))
+            lid_keys: keys.filter(k => k.includes('lid')),
+            has_lid_prop: keys.find(k => contacts[k].lid),
+            sample_full: keys.slice(0, 3).map(k => contacts[k])
         });
     } catch (err) {
         res.status(500).json({ error: err.message });

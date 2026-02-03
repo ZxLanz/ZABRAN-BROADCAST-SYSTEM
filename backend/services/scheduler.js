@@ -115,7 +115,26 @@ const initScheduler = () => {
     } catch (error) {
       console.error('❌ [SCHEDULER] Cron job error:', error.message);
       console.error(error.stack);
+      console.error(error.stack);
     }
+  });
+
+
+  // ============================================
+  // CRON JOB: Daily Cleanup at 03:00 AM
+  // Pattern: '0 3 * * *'
+  // ============================================
+  const cleanupService = require('./cleanupService');
+  const pruneMessages = require('../scripts/prune_messages'); // Import Pruner
+
+  cron.schedule('0 3 * * *', () => {
+    cleanupService.runCleanup();
+  });
+
+  // Daily Message Pruning (Retention Policy) at 04:00 AM
+  cron.schedule('0 4 * * *', () => {
+    console.log('🧹 [SCHEDULER] Running Daily Message Pruning...');
+    pruneMessages(true);
   });
 
   isSchedulerRunning = true;

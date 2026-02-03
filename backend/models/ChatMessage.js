@@ -50,7 +50,7 @@ const chatMessageSchema = new mongoose.Schema({
     pushName: { // Name of the sender (if incoming)
         type: String
     },
-    extractedPhone: { // Phone number extracted from remoteJid (if available)
+    extractedPhone: { // Helper field for searching/indexing
         type: String,
         index: true
     },
@@ -58,12 +58,22 @@ const chatMessageSchema = new mongoose.Schema({
         content: String,
         participant: String,
         id: String
-    }
+    },
+    reactions: [{
+        text: String, // Emoji
+        senderId: String, // JID of reactor
+        timestamp: Date
+    }]
 }, {
     timestamps: true
 });
 
-// Compound index for fetching chat history efficiently
-chatMessageSchema.index({ userId: 1, remoteJid: 1, timestamp: -1 });
+// ✅ COMPOUND INDEX FOR AGGREGATION PERFORMANCE
+// Handles: { userId: ..., messageType: { $nin: ... } } + sort({ timestamp: -1 })
+chatMessageSchema.index({ userId: 1, messageType: 1, timestamp: -1 });
+chatMessageSchema.index({ userId: 1, timestamp: -1 }); // ✅ NEW: Generic timestamp sort for fast load
+chatMessageSchema.index({ userId: 1, remoteJid: 1, timestamp: -1 }); // Optimizes finding messages in room
 
-module.exports = mongoose.model('ChatMessage', chatMessageSchema);
+const ChatMessage = mongoose.model('ChatMessage', chatMessageSchema);
+
+module.exports = ChatMessage;

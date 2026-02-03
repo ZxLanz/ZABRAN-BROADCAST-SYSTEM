@@ -46,49 +46,6 @@ const settingSchema = new mongoose.Schema({
     default: 'id'
   },
 
-  // Business Hours
-  businessHoursEnabled: {
-    type: Boolean,
-    default: false
-  },
-  businessHours: {
-    monday: {
-      enabled: { type: Boolean, default: true },
-      open: { type: String, default: '09:00' },
-      close: { type: String, default: '17:00' }
-    },
-    tuesday: {
-      enabled: { type: Boolean, default: true },
-      open: { type: String, default: '09:00' },
-      close: { type: String, default: '17:00' }
-    },
-    wednesday: {
-      enabled: { type: Boolean, default: true },
-      open: { type: String, default: '09:00' },
-      close: { type: String, default: '17:00' }
-    },
-    thursday: {
-      enabled: { type: Boolean, default: true },
-      open: { type: String, default: '09:00' },
-      close: { type: String, default: '17:00' }
-    },
-    friday: {
-      enabled: { type: Boolean, default: true },
-      open: { type: String, default: '09:00' },
-      close: { type: String, default: '17:00' }
-    },
-    saturday: {
-      enabled: { type: Boolean, default: false },
-      open: { type: String, default: '09:00' },
-      close: { type: String, default: '17:00' }
-    },
-    sunday: {
-      enabled: { type: Boolean, default: false },
-      open: { type: String, default: '09:00' },
-      close: { type: String, default: '17:00' }
-    }
-  },
-
   // WhatsApp Settings (reference to existing whatsapp status)
   whatsappConnected: {
     type: Boolean,

@@ -198,7 +198,7 @@ router.post('/send-message', asyncHandler(async (req, res) => {
         });
     }
 
-    const { nomor, pesan } = req.body;
+    const { nomor, pesan, quotedMsgId } = req.body;
 
     if (!nomor || !pesan) {
         return res.status(400).json({
@@ -208,7 +208,7 @@ router.post('/send-message', asyncHandler(async (req, res) => {
     }
 
     try {
-        const result = await sendMessage(userId, nomor, pesan);
+        const result = await sendMessage(userId, nomor, pesan, { quotedMsgId });
 
         if (result.success) {
             res.json({

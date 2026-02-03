@@ -8,6 +8,8 @@ import axios from '../../utils/axios';
 import toast from 'react-hot-toast';
 import { initSocket, disconnectSocket } from '../../utils/socket';
 
+import SystemMonitor from '../SystemMonitor';
+
 export default function Header() {
   const { user, logout } = useAuth();
   const { status, deviceInfo } = useWhatsApp();
@@ -167,6 +169,9 @@ export default function Header() {
 
         {/* Right: Actions */}
         <div className="flex items-center gap-4">
+
+          {/* System Monitor Widget */}
+          <SystemMonitor />
 
           {/* Status Indicator */}
           <div

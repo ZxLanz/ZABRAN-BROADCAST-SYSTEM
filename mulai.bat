@@ -19,13 +19,19 @@ start nginx.exe
 call :PrintColor "Green" "   - Nginx Started!"
 echo [%date% %time%] [INFO] Nginx Started >> C:\Zabran-Broadcast-System\system.log
 
-rem -- STEP 2: BACKEND & N8N --
-call :PrintColor "Yellow" "[%time%] [2/2] Starting Backend and n8n (PM2)..."
+rem -- STEP 2: BACKEND --
+call :PrintColor "Yellow" "[%time%] [2/3] Starting Backend Server..."
 cd /d "C:\Zabran-Broadcast-System"
 call pm2 resurrect >nul 2>&1
-call pm2 start ecosystem.config.js >nul 2>&1
-call :PrintColor "Green" "   - Backend Services Started!"
-echo [%date% %time%] [INFO] PM2 Services Started >> system.log
+call pm2 start ecosystem.config.js --only zabran-backend --env production >nul 2>&1
+call :PrintColor "Green" "   - Backend Started!"
+echo [%date% %time%] [INFO] Backend Started >> system.log
+
+rem -- STEP 3: N8N AI WORKFLOW --
+call :PrintColor "Yellow" "[%time%] [3/3] Starting n8n AI Engine..."
+call pm2 start ecosystem.config.js --only zabran-n8n --env production >nul 2>&1
+call :PrintColor "Green" "   - n8n Started!"
+echo [%date% %time%] [INFO] n8n Started >> system.log
 
 rem -- FINISH --
 call :PrintColor "Cyan" "==================================="

@@ -8,18 +8,18 @@ $ascii = @(
     "Y88b  d88P 888  888 888 888  888 Y88b.      d88P       888 888 888  888 888  888 ",
     " 'Y8888P'  'Y888888 888 888  888  'Y888    d8888888888 888 888 'Y888888 888  888 ",
     "",
-    "                 [ SYSTEM ONLINE - WELLCOME SAINT ZILAN ]",
+    "                 [ SYSTEM ONLINE - WELCOME SAINT ZILAN ]",
     ""
 )
 
 $colors = @("Green")
-$rnd = Get-Random
+
 
 foreach ($line in $ascii) {
     if ($line -match "SYSTEM ONLINE") {
         Write-Host $line -ForegroundColor White
     }
     else {
-        Write-Host $line -ForegroundColor Green
+        Write-Host $line -ForegroundColor $colors[0]
     }
 }

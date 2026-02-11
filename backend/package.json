@@ -17,9 +17,10 @@
   "author": "ZABRAN INTERNASIONAL GROUP",
   "license": "ISC",
   "dependencies": {
-    "@whiskeysockets/baileys": "^6.7.8",
+    "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "axios": "^1.5.0",
     "bcryptjs": "^2.4.3",
+    "compression": "^1.8.1",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "express": "^4.22.1",

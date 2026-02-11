@@ -147,9 +147,10 @@ const initScheduler = () => {
       const now = new Date();
 
       // 🔍 DEBUG: List all broadcasts and statuses
-      const allB = await Broadcast.find();
-      logDebug(`Initial check... (Total: ${allB.length})`);
-      allB.forEach(b => logDebug(`   🔸 ID: ${b._id}, Status: "${b.status}", Name: "${b.name}"`));
+      // 🔍 DEBUG: List PENDING/ACTIVE broadcasts only (Optimized)
+      const activeB = await Broadcast.find({ status: { $in: ['scheduled', 'on-process'] } });
+      logDebug(`Initial check... (Active: ${activeB.length})`);
+      activeB.forEach(b => logDebug(`   🔸 ID: ${b._id}, Status: "${b.status}", Name: "${b.name}"`));
 
       // Hanya proses broadcast yang memang DIJADWALKAN dan sudah waktunya
       const scheduledBroadcasts = await Broadcast.find({

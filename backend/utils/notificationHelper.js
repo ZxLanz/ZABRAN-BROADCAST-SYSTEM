@@ -68,9 +68,9 @@ const NOTIFICATION_TYPES = {
   },
   WHATSAPP_QR_READY: {
     type: 'alert',
-    icon: 'QrCode',
-    title: 'QR Code Ready',
-    getMessage: () => 'QR Code is ready. Please scan with your WhatsApp to connect.'
+    icon: 'Smartphone',
+    title: 'Pairing Mode Ready',
+    getMessage: () => 'Pairing Mode is active. Please enter your phone number to connect.'
   },
   WHATSAPP_RECONNECTING: {
     type: 'system',

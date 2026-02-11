@@ -9,7 +9,8 @@ const {
     getStatus,
     getQrCode,
     getStoreStats,
-    getProfilePicture
+    getProfilePicture,
+    pairWithPhoneNumber
 } = require('../utils/whatsappClient');
 
 // 🔔 IMPORT NOTIFICATION HELPERS
@@ -238,6 +239,50 @@ router.post('/send-message', asyncHandler(async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Internal server error during message send.'
+        });
+    }
+}));
+
+// ENDPOINT: REQUEST PAIRING CODE
+router.post('/request-pairing', asyncHandler(async (req, res) => {
+    const userId = req.user.id;
+    const { phoneNumber } = req.body;
+
+    console.log(`🔢 [API] Pairing code request from user: ${userId} for phone: ${phoneNumber}`);
+
+    if (!phoneNumber) {
+        return res.status(400).json({
+            success: false,
+            message: 'Phone number is required'
+        });
+    }
+
+    // Validate phone number format (should be digits only, e.g., 628123456789)
+    const cleanPhone = phoneNumber.replace(/\D/g, '');
+    if (cleanPhone.length < 10 || cleanPhone.length > 15) {
+        return res.status(400).json({
+            success: false,
+            message: 'Invalid phone number format. Use format: 628xxx (without +)'
+        });
+    }
+
+    try {
+        const pairingCode = await pairWithPhoneNumber(userId, cleanPhone);
+
+        res.json({
+            success: true,
+            code: pairingCode,
+            message: 'Pairing code generated successfully. Enter this code in your WhatsApp mobile app.'
+        });
+    } catch (error) {
+        console.error(`❌ [API] Pairing code error for user ${userId}:`, error);
+
+        await notifyWhatsAppError(userId, error.message);
+
+        res.status(500).json({
+            success: false,
+            message: 'Failed to generate pairing code',
+            error: error.message
         });
     }
 }));

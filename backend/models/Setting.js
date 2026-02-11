@@ -3,10 +3,9 @@ const mongoose = require('mongoose');
 
 const settingSchema = new mongoose.Schema({
   userId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
+    type: String,
     required: true,
-    unique: true // One setting document per user
+    unique: true // One setting document per user (JID)
   },
 
   // General Settings

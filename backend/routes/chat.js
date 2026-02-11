@@ -3,7 +3,7 @@ const router = express.Router();
 const mongoose = require('mongoose');
 const ChatMessage = require('../models/ChatMessage');
 const { authenticate } = require('../middleware/auth');
-const { getSocket, socketsMap, getContact } = require('../utils/whatsappClient');
+const { getSocket, socketsMap, getContact, getContactName, getProfilePicture } = require('../utils/whatsappClient');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('ffmpeg-static');
 ffmpeg.setFfmpegPath(ffmpegPath);
@@ -145,63 +145,106 @@ router.get('/stats/daily', async (req, res) => {
     }
 });
 
-// 1. GET /chats - Get list of conversations
+// DEBUG: Check Store Status
+router.get('/debug-store', async (req, res) => {
+    try {
+        const userId = String(req.user.id);
+        const { getStore } = require('../utils/whatsappClient');
+        const store = getStore(userId);
+
+        if (!store) {
+            return res.status(404).json({ success: false, message: 'Store not found', userId });
+        }
+
+        const contacts = store.contacts ? Object.values(store.contacts) : [];
+        const chats = store.chats ? store.chats.all() : [];
+
+        const contactSummary = contacts.slice(0, 10).map(c => ({
+            id: c.id,
+            name: c.name,
+            notify: c.notify,
+            verifiedName: c.verifiedName
+        }));
+
+        res.json({
+            success: true,
+            counts: {
+                contacts: contacts.length,
+                chats: chats.length
+            },
+            sampleContacts: contactSummary
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // 1. GET /chats - Get list of conversations (OPTIMIZED WITH AGGREGATION)
 router.get('/', async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = String(req.user.id); // ✅ FIX: Ensure String for Map lookup
+        console.log(`🚀 [DEBUG] GET /chats HIT. UserID: ${userId}`);
         const startTime = Date.now();
 
         // 1. Load Customers for Lookup (Optimized: Select only needed fields)
         const Customer = require('../models/Customer');
         let customersByName = new Map();  // name (lowercase) → phone
         let customersByPhone = new Map(); // phone → name
-        let jidToPhoneMap = new Map();    // any jid (LID/Phone) → normalized phone
+        // ✅ 1b. Build Map from WhatsApp Store (Memory) - CRITICAL for LIDs/Phones
+        let jidToPhoneMap = new Map();
 
-        // ✅ 1b. Build Map from WhatsApp Store (Memory) - CRITICAL for LIDs
-        // This makes us behave like WhatsApp Web: we look at the contact list first!
         try {
-            const { storesMap } = require('../utils/whatsappClient');
-            const store = storesMap.get(userId);
+            const clientUtils = require('../utils/whatsappClient');
+            if (clientUtils && clientUtils.storesMap) {
+                const store = clientUtils.storesMap.get(userId);
 
-            if (store && store.contacts) {
-                Object.values(store.contacts).forEach(c => {
-                    // Normalize standard phone JID
-                    const standardJid = c.id && c.id.includes('@s.whatsapp.net') ? c.id : null;
-                    const lidJid = c.lid || (c.id && c.id.includes('@lid') ? c.id : null);
+                if (store) {
+                    const contactCount = store.contacts ? Object.keys(store.contacts).length : 0;
+                    console.log(`📦 [DEBUG] Store FOUND. Contacts: ${contactCount}`);
+                } else {
+                    console.warn(`⚠️ [DEBUG] Store NOT FOUND for UserID: ${userId}`);
+                    console.log(`ℹ️ [DEBUG] Available Keys in storesMap:`, Array.from(clientUtils.storesMap.keys()));
+                }
 
-                    let phone = null;
+                if (store && store.contacts) {
+                    Object.values(store.contacts).forEach(c => {
+                        // Normalize standard phone JID
+                        const standardJid = c.id && c.id.includes('@s.whatsapp.net') ? c.id : null;
+                        const lidJid = c.lid || (c.id && c.id.includes('@lid') ? c.id : null);
 
-                    // If we have a standard JID, extract the phone
-                    if (standardJid) {
-                        const parts = standardJid.split('@')[0];
-                        phone = parts.replace(/\D/g, ''); // 628xxx
-                        if (phone.startsWith('0')) phone = '62' + phone.substring(1);
+                        let phone = null;
 
-                        // Map JID to Phone
-                        jidToPhoneMap.set(standardJid, phone);
-                        customersByPhone.set(phone, c.name || c.notify || c.verify || 'Unknown');
-                    }
+                        // If we have a standard JID, extract the phone
+                        if (standardJid) {
+                            const parts = standardJid.split('@')[0];
+                            phone = parts.replace(/\D/g, ''); // 628xxx
+                            if (phone.startsWith('0')) phone = '62' + phone.substring(1);
 
-                    // If we have a LID, link it to the phone (if known)
-                    if (lidJid) {
-                        // If we resolved phone from standardJid, link LID -> Phone
+                            // Map JID to Phone
+                            jidToPhoneMap.set(standardJid, phone);
+                            customersByPhone.set(phone, c.name || c.notify || c.verify || 'Unknown');
+                        }
+
+                        // If we have a LID, link it to the phone (if known)
+                        if (lidJid) {
+                            // If we resolved phone from standardJid, link LID -> Phone
+                            if (phone) {
+                                jidToPhoneMap.set(lidJid, phone);
+                            } else {
+                                // If LID is standalone, we might be able to link it later via name match
+                            }
+                        }
+
+                        // Map Names to Phone (Allow fuzzy lookup)
                         if (phone) {
-                            jidToPhoneMap.set(lidJid, phone);
-                        } else {
-                            // If LID is standalone, we might be able to link it later via name match
+                            const validName = c.name || c.notify;
+                            if (validName) {
+                                customersByName.set(validName.toLowerCase().trim(), phone);
+                            }
                         }
-                    }
-
-                    // Map Names to Phone (Allow fuzzy lookup)
-                    if (phone) {
-                        const validName = c.name || c.notify;
-                        if (validName) {
-                            customersByName.set(validName.toLowerCase().trim(), phone);
-                        }
-                    }
-                });
-            }
+                    });
+                }
+            } // Close clientUtils check
         } catch (e) {
             console.error('Store Map Error:', e);
         }
@@ -262,7 +305,7 @@ router.get('/', async (req, res) => {
         const aggregatedChats = await ChatMessage.aggregate([
             {
                 $match: {
-                    userId: new mongoose.Types.ObjectId(userId),
+                    userId: userId,
                     messageType: { $nin: ['protocol', 'senderKeyDistribution', 'unknown'] },
                     remoteJid: { $not: { $regex: /broadcast|@g\.us/ } }
                 }
@@ -296,378 +339,199 @@ router.get('/', async (req, res) => {
                     lastMessageTime: { $first: "$timestamp" }
                 }
             }
-        ]).option({ allowDiskUse: true }); // ✅ Allow disk use for heavy sort
+        ]).sort({ lastMessageTime: -1 }).limit(req.query.limit ? parseInt(req.query.limit) : 50).option({ allowDiskUse: true }); // ✅ Added Limit & Sort
 
         console.log(`📊 [PERF] DB Aggregation took ${Date.now() - startTime}ms.`);
-        console.log(`📊 [PERF] Raw Chat Groups Found: ${aggregatedChats.length}`);
+        console.log(`📊 [PERF] Chat Groups Found: ${aggregatedChats.length}`);
 
-        // 3. Process & Merge Logic (Smart Merge)
-        const lidsToLink = new Map(); // phone -> Set(lids)
-        const processedChats = new Map(); // canonicalId -> chatObject
+        // =========================================================
+        // ✅ NEW: CLEAN RUNTIME (Merge on Write Standard)
+        // No more complex fuzzy merging. We trust the Database Migration.
+        // =========================================================
 
-        // Helper: Resolve any JID to Canonical Phone
-        const resolveToCanonical = (jid) => {
-            if (!jid) return 'unknown';
+        const finalChats = await Promise.all(aggregatedChats.map(async chat => {
+            const rawJid = chat._id;
 
-            // A. Check Direct DB Map
-            if (jidToPhoneMap.has(jid)) return jidToPhoneMap.get(jid);
+            // 1. Basic Resolution
+            let cleanPhone = null;
 
-            // B. Extract Standard Phone (Primary Method)
-            if (jid.includes('@s.whatsapp.net')) {
-                const parts = jid.split('@')[0].split(':')[0];
-                let phone = parts.replace(/\D/g, '');
-                if (phone.startsWith('0')) phone = '62' + phone.substring(1);
-                if (phone.startsWith('8') && phone.length > 9) phone = '62' + phone;
-                return phone;
-            }
-
-            // C. Store/LID Lookup
-            if (jid.includes('@lid')) {
-                // 1. Try Memory Store
-                const contact = getContact(userId, jid);
-                if (contact && (contact.name || contact.notify)) {
-                    const rawName = (contact.name || contact.notify).toLowerCase();
-
-                    // 1. Literal Match
-                    let phone = customersByName.get(rawName);
-
-                    // 2. Sanitized Match (Fix "Rasya𖣂" issue)
-                    if (!phone) {
-                        const sanitizeName = (str) => str.replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F780}-\u{1F7FF}\u{1F800}-\u{1F8FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '').replace(/[^a-z0-9]/g, '');
-                        const simpleName = sanitizeName(rawName);
-                        if (simpleName.length > 2) {
-                            phone = customersByName.get(simpleName);
-                        }
-                        // DEBUG DUPLICATION
-                        if (rawName.includes('fozxnam') || rawName.includes('bapae')) {
-                            console.log(`🔍 [DEDUP-TRACE] Looking up '${rawName}' -> Simple: '${simpleName}' -> Found: ${phone}`);
-                        }
-                    }
-
-                    if (phone) {
-                        if (!lidsToLink.has(phone)) lidsToLink.set(phone, new Set());
-                        lidsToLink.get(phone).add(jid);
-
-                        // Update map for future speed
-                        jidToPhoneMap.set(jid, phone);
-                        return phone;
-                    }
-                }
-
-                // 2. Try Regex Map from Customers (Pre-loaded)
-                // (Already handled by step A if jidToPhoneMap is populated correctly)
-            }
-
-            // D. Fallback: Group by LID User ID
-            if (jid.includes('@lid')) {
-                // 1. Try to find by PushName if available in Store
-                const contact = getContact(userId, jid);
-                if (contact && (contact.name || contact.notify)) {
-                    const rawName = (contact.name || contact.notify).toLowerCase();
-                    // Try Sanitized Match
-                    const sanitizeName = (str) => str.replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F780}-\u{1F7FF}\u{1F800}-\u{1F8FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '').replace(/[^a-z0-9]/g, '');
-                    const simpleName = sanitizeName(rawName);
-
-                    if (customersByName.has(simpleName)) {
-                        const phone = customersByName.get(simpleName);
-                        jidToPhoneMap.set(jid, phone);
-                        return phone;
-                    }
-                }
-
-                const lidUser = jid.split('@')[0].split(':')[0];
-                const abstractKey = `LID:${lidUser}`;
-                if (jidToPhoneMap.has(abstractKey)) {
-                    return jidToPhoneMap.get(abstractKey);
-                }
-                return abstractKey; // Group unmapped LIDs together
-            }
-
-            return jid; // Fallback to original
-        };
-
-        // Process each aggregated group
-        for (const chatGroup of aggregatedChats) {
-            const rawJid = chatGroup._id;
-            if (!rawJid) continue;
-
-            let canonicalId = resolveToCanonical(rawJid);
-            const msg = chatGroup.lastMessage;
-
-            // 🔍 FALLBACK: Link LID to Phone via PushName (if Store failed)
-            if (rawJid.includes('@lid') && canonicalId.includes('@lid')) {
-                const pushName = (!msg.fromMe && msg.pushName && msg.pushName !== 'Unknown') ? msg.pushName : null;
-                if (pushName) {
-                    const mappedPhone = customersByName.get(pushName.toLowerCase());
-                    if (mappedPhone) {
-                        canonicalId = mappedPhone;
-                        // Cache for future
-                        if (!lidsToLink.has(mappedPhone)) lidsToLink.set(mappedPhone, new Set());
-                        lidsToLink.get(mappedPhone).add(rawJid);
-                    }
+            // Strict Phone Extraction (since we normalize upstream now)
+            if (rawJid.includes('@s.whatsapp.net')) {
+                cleanPhone = rawJid.split('@')[0];
+            } else if (rawJid.includes('@lid')) {
+                // Should have been normalized, but if not, try map
+                if (jidToPhoneMap.has(rawJid)) {
+                    cleanPhone = jidToPhoneMap.get(rawJid);
                 }
             }
 
-            // Prepare Chat Object
-            const chatObj = {
-                _id: rawJid, // Default ID (will be overwritten if merged)
-                canonicalId: canonicalId,
-                mainJid: rawJid,
+            // 2. Resolve Names (Fast Map Lookup)
+            let displayName = null;
+            let isSaved = false;
 
-                // Content
-                lastMessage: msg,
-                lastMessageTime: chatGroup.lastMessageTime,
-                unreadCount: chatGroup.unreadCount,
-
-                // Metadata
-                cleanPhone: canonicalId.match(/^\d+$/) ? canonicalId : null,
-                displayName: null,
-                isSaved: false,
-                hasStandardJid: rawJid.includes('@s.whatsapp.net'),
-
-                // For Merge Logic
-                storePushName: null
-            };
-
-            // Enhance with Name Data immediately
-            if (chatObj.cleanPhone && customersByPhone.has(chatObj.cleanPhone)) {
-                chatObj.displayName = customersByPhone.get(chatObj.cleanPhone);
-                chatObj.isSaved = true;
-            } else {
-                // Try pushName from message
-                const pushName = (!msg.fromMe && msg.pushName && msg.pushName !== 'Unknown') ? msg.pushName : null;
-                if (pushName) chatObj.displayName = pushName;
-
-                // Try Store Contact
-                const contact = getContact(userId, rawJid);
-                if (contact && (contact.name || contact.notify)) {
-                    chatObj.storePushName = (contact.name || contact.notify).toLowerCase().trim();
-                    if (!chatObj.displayName) chatObj.displayName = contact.name || contact.notify;
-                }
+            // A. Try DB Map by Phone
+            if (cleanPhone && customersByPhone.has(cleanPhone)) {
+                displayName = customersByPhone.get(cleanPhone);
+                isSaved = true;
             }
 
-            // MERGE INTO MAIN MAP
-            if (!processedChats.has(canonicalId)) {
-                chatObj.mergedJids = [rawJid]; // Track all JIDs that form this chat
-                processedChats.set(canonicalId, chatObj);
-            } else {
-                // MERGE EXISTING
-                const existing = processedChats.get(canonicalId);
-                if (!existing.mergedJids.includes(rawJid)) {
-                    existing.mergedJids.push(rawJid);
-                }
+            // B. Try Baileys Store (In-Memory Cache)
+            let storePushName = null;
+            if (!displayName) {
+                try {
+                    const store = require('../utils/whatsappClient').getStore(userId);
+                    if (store && store.contacts) {
+                        // ✅ FIX: Access contacts as object, not Map
+                        const contact = store.contacts[rawJid] || (store.contacts.get && store.contacts.get(rawJid));
 
-                // 1. Prefer @s.whatsapp.net as mainJid
-                if (chatObj.hasStandardJid && !existing.hasStandardJid) {
-                    existing.mainJid = chatObj.mainJid;
-                    existing._id = chatObj.mainJid;
-                    existing.cleanPhone = chatObj.cleanPhone; // Ensure phone is set
-                }
+                        if (contact) {
+                            // ✅ USER REQUEST: Logic "Ambil dari WA langsung (Saved)" -> "Ambil PushName (Bio)" 
+                            // Priority: 
+                            // 1. Zabran DB (Already checked above) -> displayName set
+                            // 2. WhatsApp Saved Name (contact.name)
+                            // 3. WhatsApp Push Name (contact.notify)
 
-                // 2. Update Last Message (Take newest)
-                if (new Date(chatObj.lastMessageTime) > new Date(existing.lastMessageTime)) {
-                    existing.lastMessage = chatObj.lastMessage;
-                    existing.lastMessageTime = chatObj.lastMessageTime;
-                }
+                            const waSavedName = contact.name; // Name saved in phone book
+                            const waPushName = contact.notify || contact.verifiedName; // Name in their profile
 
-                // 3. Sum Unread
-                existing.unreadCount += chatObj.unreadCount;
+                            if (!displayName && waSavedName) {
+                                displayName = waSavedName;
+                                console.log(`📛 [NAME] ${rawJid} → "${displayName}" (source: whatsapp_saved)`);
+                            }
 
-                // 4. Update Saved Status
-                if (chatObj.isSaved) {
-                    existing.isSaved = true;
-                    existing.displayName = chatObj.displayName;
-                }
-
-                // 5. Merge PushName
-                if (chatObj.storePushName) existing.storePushName = chatObj.storePushName;
-            }
-        }
-
-        // ==================== SELF-HEALING (Async) ====================
-        if (lidsToLink.size > 0) {
-            (async () => {
-                for (const [phone, lids] of lidsToLink.entries()) {
-                    try {
-                        const lidsArray = Array.from(lids);
-                        await Customer.updateOne(
-                            { phone: { $regex: new RegExp(phone.substring(2)) } },
-                            { $addToSet: { jids: { $each: lidsArray } } }
-                        );
-                    } catch (e) { console.error('Self-heal error:', e); }
-                }
-            })();
-        }
-
-        // ==================== FINAL DEDUPLICATION (Deep Merge by PushName) ====================
-        let conversations = Array.from(processedChats.values());
-
-        // Map to group by Name for orphan LIDs
-        const nameToChatMap = new Map(); // "lisnawati" -> chatObj (Phone)
-
-        // ✅ Helper sanitization (re-defined or scoped)
-        const sanitizeNameClean = (str) => {
-            if (!str) return '';
-            return str.toLowerCase()
-                .replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F780}-\u{1F7FF}\u{1F800}-\u{1F8FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '')
-                .replace(/[^a-z0-9]/g, '');
-        };
-
-        // 1. Index all chats that HAVE a phone number
-        conversations.forEach(c => {
-            if (c.cleanPhone) {
-                if (c.displayName) {
-                    nameToChatMap.set(c.displayName.toLowerCase(), c);
-                    const clean = sanitizeNameClean(c.displayName);
-                    if (clean.length > 2) nameToChatMap.set(clean, c);
-                }
-                if (c.storePushName) {
-                    nameToChatMap.set(c.storePushName.toLowerCase(), c); // Strict
-                    const clean = sanitizeNameClean(c.storePushName);
-                    if (clean.length > 2) nameToChatMap.set(clean, c);
-                }
-            }
-        });
-
-        // ✅ HELPER: Levenshtein Distance for Fuzzy Matching
-        const levenshteinDistance = (a, b) => {
-            if (a.length === 0) return b.length;
-            if (b.length === 0) return a.length;
-            const matrix = [];
-            for (let i = 0; i <= b.length; i++) matrix[i] = [i];
-            for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
-            for (let i = 1; i <= b.length; i++) {
-                for (let j = 1; j <= a.length; j++) {
-                    if (b.charAt(i - 1) === a.charAt(j - 1)) {
-                        matrix[i][j] = matrix[i - 1][j - 1];
-                    } else {
-                        matrix[i][j] = Math.min(
-                            matrix[i - 1][j - 1] + 1,
-                            Math.min(matrix[i][j - 1] + 1, matrix[i - 1][j] + 1)
-                        );
-                    }
-                }
-            }
-            return matrix[b.length][a.length];
-        };
-
-        const finalChats = [];
-
-        conversations.forEach(conv => {
-            let merged = false;
-
-            // Logic: If this is an ORPHAN LID (No Phone)
-            if (!conv.cleanPhone) {
-                // Check if its name matches a Phone Chat
-                const nameKey = conv.displayName ? conv.displayName.toLowerCase() : null;
-                const pushKey = conv.storePushName ? conv.storePushName.toLowerCase() : null;
-
-                // Try Strict Match
-                let parent = (nameKey && nameToChatMap.get(nameKey)) || (pushKey && nameToChatMap.get(pushKey));
-
-                // 🔍 Try Sanitized Match (Fix for Rasya𖣂)
-                if (!parent) {
-                    const cleanName = sanitizeNameClean(conv.displayName);
-                    const cleanPush = sanitizeNameClean(conv.storePushName);
-                    if (cleanName.length > 2) parent = nameToChatMap.get(cleanName);
-                    if (!parent && cleanPush.length > 2) parent = nameToChatMap.get(cleanPush);
-                }
-
-                // 🔍 Try Fuzzy Match (Fix for "Akbar" vs "Akbr")
-                if (!parent) {
-                    const candidateName = (conv.displayName || conv.storePushName || '').toLowerCase();
-                    if (candidateName.length > 3) {
-                        for (const [key, val] of nameToChatMap.entries()) {
-                            // Only compare if key is reasonable length
-                            if (key.length > 3) {
-                                const dist = levenshteinDistance(candidateName, key);
-                                // Allow 1 edit for short words (4-5 chars), 2 edits for longer
-                                const threshold = key.length < 6 ? 1 : 2;
-                                if (dist <= threshold) {
-                                    console.log(`🔗 [FUZZY MERGE] Matched "${candidateName}" with "${key}" (Dist: ${dist})`);
-                                    parent = val;
-
-                                    // ✅ CRITICAL: Trigger Self-Healing so DB remembers this link
-                                    if (parent.cleanPhone) {
-                                        if (!lidsToLink.has(parent.cleanPhone)) lidsToLink.set(parent.cleanPhone, new Set());
-                                        lidsToLink.get(parent.cleanPhone).add(conv._id); // Add orphan JID
-                                    }
-                                    break;
+                            if (waPushName) {
+                                storePushName = waPushName;
+                                if (!displayName) {
+                                    displayName = waPushName;
+                                    console.log(`📛 [NAME] ${rawJid} → "${displayName}" (source: push_name)`);
                                 }
                             }
                         }
                     }
-                }
+                } catch (e) { }
+            }
 
-                if (parent && parent !== conv) {
-                    console.log(`🔗 [DEEP MERGE] Merging Orphan "${conv.displayName}" -> Parent "${parent.displayName}"`);
+            // C. Try PushName from Message (ONLY IF NOT FROM ME or System)
+            // 🛑 FIX: Prevent showing own pushname ("Lord Zilan") for other chats
+            let safePushName = null;
 
-                    // Merge into Parent
-                    if (new Date(conv.lastMessageTime) > new Date(parent.lastMessageTime)) {
-                        parent.lastMessage = conv.lastMessage;
-                        parent.lastMessageTime = conv.lastMessageTime;
-                    }
-                    parent.unreadCount += conv.unreadCount;
+            // ✅ DEBUG: Check Message Props
+            if (chat.lastMessage) {
+                const isMsgFromMe = chat.lastMessage.fromMe === true || chat.lastMessage.fromMe === "true";
+                // console.log(`🔍 [MSG CHECK] ${rawJid} | fromMe: ${chat.lastMessage.fromMe} (${isMsgFromMe}) | push: ${chat.lastMessage.pushName}`);
 
-                    // ✅ MERGE JIDs so markAsRead works for both
-                    if (!parent.mergedJids) parent.mergedJids = [];
-                    if (conv.mergedJids && Array.isArray(conv.mergedJids)) {
-                        conv.mergedJids.forEach(j => {
-                            if (!parent.mergedJids.includes(j)) parent.mergedJids.push(j);
-                        });
-                    } else {
-                        if (!parent.mergedJids.includes(conv._id)) parent.mergedJids.push(conv._id);
-                    }
-
-                    merged = true;
-                } else {
-                    // Try Advanced Resolve (Last Ditch)
-                    const { resolvePhoneFromLid } = require('../utils/whatsappClient');
-                    // Note: We can't await here in forEach, so we mark it for potential async resolve in future or just let it be.
-                    // For performance, we skip the heavy await loop here and rely on the self-healing in next refresh.
+                if (!isMsgFromMe && chat.lastMessage.pushName && chat.lastMessage.pushName !== 'Unknown') {
+                    // Extra safety: Don't use if it matches current user name logic (Lord Zilan)
+                    // But we don't know my pushName here easily. 
+                    // Just relying on !fromMe should be enough IF fromMe is correct.
+                    safePushName = chat.lastMessage.pushName;
                 }
             }
 
-            if (!merged) {
-                // Post-processing for frontend
+            // ✅ FALLBACK: If message didn't have pushName, use Store's notify
+            if (!safePushName && storePushName) {
+                safePushName = storePushName;
+            }
 
-                // 1. Determine Display Name (WhatsApp Web Logic)
-                // - Saved? -> Use DB Name (Already set above)
-                // - Unsaved? -> Use Formatted Phone (+62...)
-                // - No Phone (LID)? -> Use PushName
-                // - Nothing? -> Unknown
+            if (!displayName && safePushName) {
+                displayName = safePushName;
+                console.log(`📛 [NAME] ${rawJid} → "${displayName}" (source: last_msg_push)`);
+            }
 
-                // Store PushName explicitly for frontend (~Name display)
-                const availablePushName = conv.storePushName || (conv.lastMessage?.pushName !== 'Unknown' ? conv.lastMessage?.pushName : null);
-                conv.pushName = availablePushName;
+            // D. Fallback
+            if (!displayName && cleanPhone) {
+                displayName = cleanPhone;
+                console.log(`📛 [NAME] ${rawJid} → "${displayName}" (source: phone_fallback)`);
+            }
 
-                if (!conv.isSaved) {
-                    if (conv.cleanPhone) {
-                        // Unsaved with Number -> Show Number
-                        conv.displayName = `+${conv.cleanPhone}`;
-                    } else if (availablePushName) {
-                        // Unsaved, No Number (LID) -> Show PushName
-                        conv.displayName = availablePushName;
-                    } else {
-                        conv.displayName = 'Unknown Contact';
-                    }
+            if (!displayName) {
+                displayName = "Unknown Contact";
+            }
+
+            // E. Fetch Profile Picture
+            let profilePicUrl = null;
+            try {
+                const { getProfilePicture } = require('../utils/whatsappClient');
+                profilePicUrl = await getProfilePicture(userId, rawJid);
+            } catch (e) { }
+
+            return {
+                _id: rawJid,
+                canonicalId: cleanPhone || rawJid,
+                mainJid: rawJid,
+
+                lastMessage: chat.lastMessage,
+                lastMessageTime: chat.lastMessageTime,
+                unreadCount: chat.unreadCount,
+
+                displayName: displayName,
+                phone: cleanPhone,
+                cleanPhone: cleanPhone,
+                isSaved: isSaved,
+                pushName: safePushName, // ✅ Use safe pushName (now reinforced by Store)
+                profilePictureUrl: profilePicUrl
+            };
+        }));
+
+        // =========================================================
+        // ✅ 3. MERGE & DEDUPLICATE (The Fix for Split Chats)
+        // =========================================================
+        const mergedChatsMap = new Map();
+
+        finalChats.forEach(chat => {
+            // Identifier: Use cleanPhone if available, otherwise rawJid
+            // If cleanPhone is available, all LIDs/Aliases for that number will merge here.
+            const key = chat.cleanPhone || chat.mainJid;
+
+            // 🚨 STRICT FILTER: Hide Unresolved LIDs logic
+            // User Request: "Jangan ada LID" (Do not show LID)
+            // If we have no phone number and it's a raw LID, SKIP IT.
+            if (!chat.cleanPhone && chat.mainJid.includes('@lid')) {
+                // console.log(`👻 [FILTER] Hiding unresolved LID: ${chat.mainJid}`);
+                return;
+            }
+
+            if (mergedChatsMap.has(key)) {
+                // Merge Logic
+                const existing = mergedChatsMap.get(key);
+
+                // A. Prefer the entry that has a Real Name (not just number)
+                if (existing.displayName === existing.cleanPhone && chat.displayName !== chat.cleanPhone) {
+                    existing.displayName = chat.displayName;
                 }
 
-                // Ensure ID is stable
-                if (conv.cleanPhone) {
-                    // Force the ID to be the phone JID to prevent React key duplication
-                    conv._id = `${conv.cleanPhone}@s.whatsapp.net`;
+                // B. Prefer the entry that has a Profile Pic
+                if (!existing.profilePictureUrl && chat.profilePictureUrl) {
+                    existing.profilePictureUrl = chat.profilePictureUrl;
                 }
 
-                finalChats.push(conv);
+                // C. Take the LATEST message time
+                if (new Date(chat.lastMessageTime) > new Date(existing.lastMessageTime)) {
+                    existing.lastMessage = chat.lastMessage;
+                    existing.lastMessageTime = chat.lastMessageTime;
+                }
+
+                // D. Sum Unread Counts
+                existing.unreadCount += chat.unreadCount;
+
+                // E. Ensure Main JID is the Phone JID (Priority)
+                if (chat.mainJid.includes('@s.whatsapp.net')) {
+                    existing.mainJid = chat.mainJid;
+                    existing._id = chat.mainJid;
+                }
+
+            } else {
+                mergedChatsMap.set(key, chat);
             }
         });
 
-        // Final Sort
-        finalChats.sort((a, b) => new Date(b.lastMessageTime) - new Date(a.lastMessageTime));
+        const dedupedChats = Array.from(mergedChatsMap.values());
 
-        console.log(`✅ [GET /chats] Returned ${finalChats.length} conversations (took ${Date.now() - startTime}ms)`);
-        res.json({ success: true, data: finalChats });
+        // Final Sort
+        dedupedChats.sort((a, b) => new Date(b.lastMessageTime) - new Date(a.lastMessageTime));
+
+        console.log(`✅ [GET /chats] Returned ${dedupedChats.length} conversations (Merged from ${finalChats.length}, took ${Date.now() - startTime}ms)`);
+        res.json({ success: true, data: dedupedChats });
 
     } catch (error) {
         console.error('Error fetching conversations:', error);
@@ -685,37 +549,51 @@ router.get('/:jid', async (req, res) => {
         // Normalize JID to match all variants (e.g., @s.whatsapp.net and @lid)
         const normalizedNumber = normalizeJid(jid);
 
-        // 🚀 SMART HISTORY LOOKUP (Bridge Phone <-> LID)
-        let targetJids = [new RegExp(`^${normalizedNumber}[:\\@]`)]; // Default Regex
+        console.log(`🔍 [GET /messages] Request: ${jid} -> Normalized: ${normalizedNumber}`);
 
-        try {
-            const Customer = require('../models/Customer');
-            const customer = await Customer.findOne({
-                $or: [{ phone: normalizedNumber }, { jids: jid }]
-            });
+        // 🚀 SMART HISTORY LOOKUP (All-JID Capture)
+        // User Request: "JANGAN SAMPAI ADA YANG LOLOS"
+        // Strategy: Convert JID -> Phone -> Query ALL JIDs associated with that Phone.
 
-            if (customer && customer.jids && customer.jids.length > 0) {
-                // If customer found, fetch messages for ALL their known JIDs
-                targetJids = customer.jids;
-                // Add the current requested JID just in case it's new and not in DB yet
-                if (!targetJids.includes(jid)) targetJids.push(jid);
+        let targetPhone = normalizedNumber;
 
-                // Also add the Regex to catch any unlinked phone-based variations
-                // actually $in accepts regex, so we can mix strings and regex if needed, 
-                // but simpler to just use $in with known strings + the regex approach as fallback
-            }
-        } catch (err) {
-            console.log('Error looking up customer for history:', err);
+        // Safety: If normalizedNumber is null/weird, try strict extraction
+        if (!targetPhone || targetPhone.includes('@')) {
+            targetPhone = jid.replace(/\D/g, '');
+            if (targetPhone.startsWith('0')) targetPhone = '62' + targetPhone.substring(1);
         }
-        // 3. Build Query
+
+        console.log(`🔍 [GET /messages] Locking Target: ${targetPhone} (Original: ${jid})`);
+
+        // 3. Build Query - THE "DRAGNET" QUERY
+        // Matches:
+        // 1. Exact Remote JID (Legacy)
+        // 2. Extracted Phone Field (New Standard)
+        // 3. Regex Match for Number (Covers @s.whatsapp.net AND @lid if phone is embedded)
+        // 4. Participant Match (For group messages from this user)
+
+        // 3. Build Query - THE "DRAGNET" QUERY
+        // Matches:
+        // 1. Exact Remote JID (Legacy)
+        // 2. Extracted Phone Field (New Standard)
+        // 3. Regex Match for Number (Covers @s.whatsapp.net AND @lid if phone is embedded)
+        // 4. Participant Match (For group messages from this user)
+
+        const orConditions = [
+            { remoteJid: jid },
+            { extractedPhone: targetPhone }
+        ];
+
+        // 🛡️ REGEX SAFETY: Only use Regex if targetPhone is long enough (avoid matching "62" against everyone)
+        if (targetPhone && targetPhone.length >= 10) {
+            orConditions.push({ remoteJid: { $regex: targetPhone } });
+            orConditions.push({ participant: { $regex: targetPhone } });
+        }
+
         const query = {
             userId: userId,
-            $or: [
-                { remoteJid: { $in: targetJids } },
-                { participant: { $in: targetJids } } // Handle group messages where 'participant' matches
-                // Note: normalizedJid handles the merging, so we query basically everything related to this conversation
-            ],
-            // ✅ LIMIT HISTORY TO 3 MONTHS
+            $or: orConditions,
+            // Limit to 3 months (Optimized)
             timestamp: { $gte: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000) }
         };
 
@@ -723,15 +601,37 @@ router.get('/:jid', async (req, res) => {
         if (before) {
             query.timestamp = {
                 $lt: new Date(before),
-                $gte: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000) // Maintain floor even when paging
+                $gte: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000)
             };
         }
 
+        // 4. Execute Query
         const messages = await ChatMessage.find(query)
             .sort({ timestamp: -1 })
-            .limit(parseInt(limit));
+            .limit(parseInt(limit))
+            .lean();
 
-        res.json({ success: true, data: messages.reverse() });
+        // 5. Post-Process: Attach Names
+        const messagesWithNames = messages.map(msg => {
+            let senderName = msg.pushName || 'Unknown';
+            // ✅ FIX: Safety check for msg.key (some migrated messages might lack it)
+            if (msg.key && msg.key.fromMe) senderName = 'Me';
+            // If fromMe is true directly on the object (legacy)
+            if (msg.fromMe) senderName = 'Me';
+
+            return {
+                ...msg,
+                senderName: senderName,
+                pushName: msg.pushName // ✅ Explicitly send PushName
+            };
+        });
+
+        res.json({
+            success: true,
+            data: messagesWithNames.reverse(),
+            debug: { targetPhone, found: messages.length, sources: ['JID', 'Phone', 'LID'] }
+        });
+
     } catch (error) {
         console.error('Error fetching messages:', error);
         res.status(500).json({ success: false, error: 'Failed to fetch messages' });
@@ -743,7 +643,7 @@ router.post('/:jid/send', async (req, res) => {
     try {
         const userId = String(req.user.id);
         const { jid } = req.params;
-        const { message } = req.body;
+        const { message, quotedMsgId } = req.body;
 
         if (!message) {
             return res.status(400).json({ success: false, error: 'Message is required' });
@@ -777,12 +677,39 @@ router.post('/:jid/send', async (req, res) => {
             formattedJid = formattedJid + '@s.whatsapp.net';
         }
 
-        console.log(`Sending text to ${formattedJid}: ${message}`);
+        console.log(`Sending text to ${formattedJid}: ${message} ${quotedMsgId ? `(Reply to: ${quotedMsgId})` : ''}`);
 
-        const sentMsg = await sock.sendMessage(formattedJid, { text: message });
+        // ✅ HANDLE QUOTED MESSAGE (REPLY)
+        let quotedMsg = undefined;
+        if (quotedMsgId) {
+            try {
+                const store = require('../utils/whatsappClient').getStore(userId);
+                if (store) {
+                    // Try to load from store
+                    const loaded = await store.loadMessage(formattedJid, quotedMsgId);
+                    if (loaded) {
+                        quotedMsg = loaded;
+                        console.log(`✅ [REPLY] Found quoted message in Store`);
+                    } else {
+                        console.warn(`⚠️ [REPLY] Quoted message ${quotedMsgId} not found in Store`);
+                    }
+                }
+            } catch (err) {
+                console.error('Error loading quoted message:', err);
+            }
+        }
+
+        const sentMsg = await sock.sendMessage(formattedJid, { text: message }, { quoted: quotedMsg });
 
         // ✅ MANUAL SAVE: Ensure message is saved immediately to DB (don't wait for upsert)
         const ChatMessage = require('../models/ChatMessage');
+
+        let extractedPhone = null;
+        if (formattedJid.includes('@')) {
+            const parts = formattedJid.split('@')[0].split(':')[0];
+            extractedPhone = parts.replace(/\D/g, ''); // Extract digits
+        }
+
         const newMessage = {
             userId: userId,
             remoteJid: formattedJid,
@@ -793,7 +720,7 @@ router.post('/:jid/send', async (req, res) => {
             status: 'sent', // Initially sent
             timestamp: new Date(),
             pushName: 'Me', // System sent
-            extractedPhone: formattedJid.includes('@s.whatsapp.net') ? formattedJid.split('@')[0] : null
+            extractedPhone: extractedPhone
         };
 
         await ChatMessage.findOneAndUpdate(
@@ -1091,77 +1018,137 @@ router.post('/:jid/read', async (req, res) => {
     // Original Send Text Endpoint (Moved down or kept logic)
     // [REMOVED DUPLICATE SEND/READ HANDLERS]
 
-    // 5. POST /chats/:jid/read - Mark messages as read
-    router.post('/:jid/read', async (req, res) => {
-        try {
-            const userId = req.user.id;
-            const { jid } = req.params;
-            const { jids } = req.body; // ✅ Support for Merged JIDs
+});
 
-            // Determine target JIDs (Single or Multiple)
-            let targetJids = [jid];
+// [REMOVED DUPLICATE]
 
-            if (jids && Array.isArray(jids) && jids.length > 0) {
-                targetJids = jids;
-            }
+// 6. DELETE /chats/:jid - Clear chat history (Hard Delete)
+router.delete('/:jid', async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { jid } = req.params;
 
-            console.log(`👀 [READ] Marking as read for user ${userId}, targets:`, targetJids);
+        // Normalize JID to Phone for broad deletion
+        let targetPhone = normalizeJid(jid);
 
-            // 1. Update DB (Mark all unread messages from these JIDs as read)
-            await ChatMessage.updateMany(
-                {
-                    userId: new mongoose.Types.ObjectId(userId),
-                    remoteJid: { $in: targetJids }, // ✅ Match ANY of the linked IDs
-                    fromMe: false,
-                    status: { $ne: 'read' }
-                },
-                { $set: { status: 'read' } }
-            );
-
-            // 2. Send Read Receipt to WhatsApp (Realtime)
-            const sock = getSocket(userId);
-            if (sock) {
-                // We need valid keys to send read receipts. 
-                // Ideally we find the unread messages first, but for performance we might skip 
-                // or just rely on the frontend to have triggered a specific read if needed.
-                // Baileys requires keys. If we just want to clear status, we assume user read them.
-                // Implementing fully correct read receipts requires fetching the exact keys.
-
-                // Allow "Bulk Read" attempt (Best Effort)
-                // Ideally frontend sends keys, but here we just ensure DB is consistent.
-            }
-
-            res.json({ success: true });
-        } catch (error) {
-            console.error('Error marking read:', error);
-            res.status(500).json({ success: false, error: 'Failed' });
+        // Final safety cleanup of the phone string
+        if (targetPhone && targetPhone.includes('@')) {
+            targetPhone = targetPhone.replace(/\D/g, '');
+            if (targetPhone.startsWith('0')) targetPhone = '62' + targetPhone.substring(1);
         }
-    });
 
-    // Delete chat history
-    router.delete('/:jid', async (req, res) => {
-        try {
-            const userId = String(req.user.id);
-            const { jid } = req.params;
+        console.log(`🗑️ [DELETE] Hard Deleting Chat: ${jid} (Target Phone: ${targetPhone})`);
 
-            // Normalize JID to delete all variants
-            const normalizedNumber = normalizeJid(jid);
+        // 1. Delete Messages (The Root Cause of "Zombie Chats")
+        // We delete ANY message that matches this phone number or JID
+        const msgQuery = {
+            userId: userId,
+            $or: [
+                { remoteJid: jid },
+                { extractedPhone: targetPhone },
+                { remoteJid: { $regex: targetPhone } }
+            ]
+        };
 
-            // Delete duplicates based on regex search for the normalized number or original keys
-            await ChatMessage.deleteMany({
-                userId,
-                $or: [
-                    { remoteJid: new RegExp(`^${normalizedNumber}[:\\@]`) },
-                    { remoteJid: jid }
-                ]
-            });
+        const deleteResult = await ChatMessage.deleteMany(msgQuery);
+        console.log(`   🔥 Deleted ${deleteResult.deletedCount} messages.`);
 
-            res.json({ success: true });
-        } catch (error) {
-            console.error('Error deleting chat:', error);
-            res.status(500).json({ success: false, error: 'Failed' });
+        res.json({ success: true, count: deleteResult.deletedCount });
+
+    } catch (error) {
+        console.error('Error deleting chat:', error);
+        res.status(500).json({ success: false, error: 'Failed to delete chat' });
+    }
+});
+
+// 7. POST /messages/:msgId/download - Download Media Manual
+router.post('/messages/:msgId/download', async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { msgId } = req.params;
+        const { remoteJid } = req.body; // Needed to find message in Baileys store/DB
+
+        console.log(`📥 [DOWNLOAD] Request for msg: ${msgId} (Chat: ${remoteJid})`);
+
+        const ChatMessage = require('../models/ChatMessage');
+        const { downloadMediaMessage } = require('@whiskeysockets/baileys');
+        const { getSocket, getStore } = require('../utils/whatsappClient');
+        const fs = require('fs');
+        const path = require('path');
+
+        // 1. Find Message in DB to get keys
+        const msg = await ChatMessage.findOne({ msgId: msgId });
+
+        if (!msg) {
+            return res.status(404).json({ success: false, error: 'Message not found in DB' });
         }
-    });
 
-    module.exports = router;
-    ```
+        // 2. Reconstruct Message Object for Baileys
+        // We need the full message object (including media keys) to download
+        // Since we only save partial data to DB, we might need to fetch from Store OR rely on what we saved.
+        // ERROR: DB usually doesn't store the full 'message' object required for decryption.
+        // STRATEGY: Try to find in Store first.
+
+        let messageToDownload = null;
+        const store = getStore(userId);
+
+        if (store) {
+            // Try to load message
+            try {
+                const loadedMsg = await store.loadMessage(remoteJid, msgId);
+                if (loadedMsg) {
+                    messageToDownload = loadedMsg;
+                }
+            } catch (e) {
+                console.warn('Store load failed:', e);
+            }
+        }
+
+        // If not in store, we can't accept generic download unless we stored the mediaKey (which we likely didn't in this simplified DB)
+        // BUT, if the file is already in mediaUrl from previous auto-download, just return that.
+        if (msg.mediaUrl) {
+            return res.json({ success: true, url: msg.mediaUrl, type: 'cached' });
+        }
+
+        if (!messageToDownload) {
+            return res.status(400).json({ success: false, error: 'Message data not found in memory. Cannot decrypt media.' });
+        }
+
+        // 3. Download
+        const buffer = await downloadMediaMessage(
+            messageToDownload,
+            'buffer',
+            {},
+            { logger: console } // Pass logger
+        );
+
+        // 4. Save to Public
+        const folder = path.join(__dirname, '../public/media/downloads');
+        if (!fs.existsSync(folder)) fs.mkdirSync(folder, { recursive: true });
+
+        // Guess Ext
+        let ext = '.bin';
+        if (msg.messageType === 'imageMessage') ext = '.jpg';
+        else if (msg.messageType === 'videoMessage') ext = '.mp4';
+        else if (msg.messageType === 'audioMessage') ext = '.ogg';
+        else if (msg.messageType === 'documentMessage') ext = '.dat'; // fallback
+
+        const filename = `download_${msgId}${ext}`;
+        const filepath = path.join(folder, filename);
+
+        fs.writeFileSync(filepath, buffer);
+
+        // 5. Update DB
+        const publicUrl = `/media/downloads/${filename}`;
+        await ChatMessage.updateOne({ _id: msg._id }, { mediaUrl: publicUrl });
+
+        res.json({ success: true, url: publicUrl, type: 'downloaded' });
+
+    } catch (error) {
+        console.error('Download error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+module.exports = router;
+

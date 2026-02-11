@@ -11,9 +11,22 @@ import {
 import ChatAvatar from '../components/ChatAvatar';
 import DeleteConfirm from '../components/DeleteConfirm';
 import TagManagementModal from '../components/TagManagementModal';
-
-
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+
+// Helper Function
+const formatMessageTime = (timestamp) => {
+    if (!timestamp) return '';
+    const date = new Date(timestamp);
+    if (isNaN(date.getTime())) return ''; // Handle Invalid Date
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+};
+
+// ✅ HELPER: Normalize Phone to ensure matching works
+const normalizePhone = (jid) => {
+    if (!jid) return '';
+    return String(jid).replace(/\D/g, ''); // Keep only digits
+};
 
 export default function LiveChat() {
     const [conversations, setConversations] = useState([]);
@@ -45,6 +58,7 @@ export default function LiveChat() {
     const [isSaveContactModalOpen, setIsSaveContactModalOpen] = useState(false);
     const [saveContactName, setSaveContactName] = useState('');
 
+    const selectedChatRef = useRef(null);
     const socketRef = useRef();
     const messagesEndRef = useRef(null);
     const menuRef = useRef(null);
@@ -251,12 +265,45 @@ export default function LiveChat() {
         messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
     };
 
+    // ✅ MANUAL DOWNLOAD HANDLER
+    const handleManualDownload = async (msg) => {
+        try {
+            const toastId = toast.loading('Mengunduh media...');
+
+            const res = await axios.post(`/chats/messages/${msg.msgId}/download`, {
+                remoteJid: msg.remoteJid
+            });
+
+            if (res.data.success) {
+                toast.success('Media berhasil diunduh!', { id: toastId });
+
+                // Update message in state locally to show image immediately
+                setMessages(prev => prev.map(m => {
+                    if (m.msgId === msg.msgId) {
+                        return {
+                            ...m,
+                            mediaUrl: res.data.url,
+                            mediaType: res.data.type
+                        };
+                    }
+                    return m;
+                }));
+            } else {
+                toast.error('Gagal mengunduh media', { id: toastId });
+            }
+        } catch (err) {
+            console.error('Download error:', err);
+            toast.error('Gagal koneksi ke server');
+        }
+    };
+
     const fetchConversations = useCallback(async () => {
         try {
-            const { data } = await axios.get('/chats');
+            const { data } = await axios.get('/chats?limit=50');
 
             if (data.success) {
 
+                // ✅ BACKEND ALREADY DEDUPED (Trust the Source of Truth)
                 setConversations(data.data);
             } else {
 
@@ -356,21 +403,47 @@ export default function LiveChat() {
         // For simplicity reusing existing logic but fixing dependencies:
 
         const newSocket = io(API_URL.replace('/api', ''), {
-            query: { userId: user ? user.id : '' }
+            query: { userId: userId },
+            reconnection: true,
+            reconnectionAttempts: 5,
+            reconnectionDelay: 1000,
+            reconnectionDelayMax: 5000
         });
         socketRef.current = newSocket;
 
         newSocket.on('connect', () => {
-            console.log('🔌 Connected to WebSocket');
-            // Re-join rooms if needed
+            console.log('🔌 [SOCKET] Connected to WebSocket');
+            // ✅ TEST UPLINK: Send ping to server immediately AFTER connect
+            newSocket.emit('ping_test', { userId, timestamp: new Date().toISOString() });
+            console.log('🚀 [SOCKET TEST] Sent ping_test to server');
+        });
+
+        newSocket.on('reconnect', (attempt) => {
+            console.log(`🔄 [SOCKET] Reconnected after ${attempt} attempts`);
+        });
+
+        newSocket.on('connect_error', (err) => {
+            console.error(`❌ [SOCKET ERROR] Connection Error: ${err.message}`, err);
+        });
+
+        // ✅ DEBUG: Listen to ALL events to debug why new_message is missing
+        newSocket.onAny((eventName, ...args) => {
+            console.log(`🔍 [SOCKET ANY] Event: ${eventName}`, args);
         });
 
         newSocket.on('new_message', (data) => {
+            console.log('📨 [SOCKET] New message received:', data);
+
             const incomingMsg = data.message;
-            if (incomingMsg.userId !== user.id) return; // Prevent cross-user data (if shared socket)
+
+            // ✅ FIX: Check data.userId using STRING COMPARISON to be safe
+            if (String(data.userId) !== String(userId)) {
+                console.warn(`⚠️ [SOCKET] Message userId mismatch: received ${data.userId} vs current ${userId}`);
+                return;
+            }
 
             setConversations(prev => {
-                const newList = [...prev];
+                const newList = [...prev]; // ✅ FIX: Define newList
                 // Match by ID OR by phone digits for robust deduplication
                 const index = newList.findIndex(c =>
                     c._id === incomingMsg.remoteJid ||
@@ -387,10 +460,17 @@ export default function LiveChat() {
                     newList.unshift(updatedChat);
 
                     // ✅ FIXED: Use Ref for check to avoid dependency loop
+                    // ✅ FIXED: Check if already read (Auto-Read)
                     const currentSelected = selectedChatRef.current;
-                    if (currentSelected && normalizePhone(currentSelected._id) === normalizePhone(updatedChat._id)) {
+                    const isChatOpen = currentSelected && normalizePhone(currentSelected._id) === normalizePhone(updatedChat._id);
+
+                    if (isChatOpen) {
                         updatedChat.unreadCount = 0;
-                    } else {
+                        // Mark as read immediately in DB if open
+                        if (incomingMsg.status !== 'read' && !incomingMsg.fromMe) {
+                            socketRef.current.emit('mark_read', { remoteJid: updatedChat._id });
+                        }
+                    } else if (incomingMsg.status !== 'read' && !incomingMsg.fromMe) {
                         updatedChat.unreadCount = (updatedChat.unreadCount || 0) + 1;
                     }
 
@@ -404,8 +484,12 @@ export default function LiveChat() {
             });
 
             // If chat is open, handle message list
+            // If chat is open, handle message list
             const currentSelected = selectedChatRef.current;
+            console.log(`📨 [DEBUG MATCH] Checking match. Current: ${currentSelected?._id}, Incoming: ${incomingMsg.remoteJid}`);
+
             if (currentSelected && normalizePhone(currentSelected._id) === normalizePhone(incomingMsg.remoteJid)) {
+                console.log('✅ [DEBUG MATCH] Match found! Updating messages...');
                 setMessages(prev => {
                     // 1. Robust Deduplication
                     const exists = prev.some(m => {
@@ -454,15 +538,24 @@ export default function LiveChat() {
         });
 
         socketRef.current.on('message_status_update', (data) => {
-            console.log('✅ Status Update:', data);
-            setMessages(prev => prev.map(m => {
-                // Match by msgId (DB field) or key.id (Baileys object structure)
-                if (m.msgId === data.messageId || (m.key && m.key.id === data.messageId)) {
-                    // Update status locally
-                    return { ...m, status: data.status };
-                }
-                return m;
-            }));
+            console.log('✅ [SOCKET] Status Update Received:', data);
+
+            setMessages(prev => {
+                const updated = prev.map(m => {
+                    // Robust Match: Check msgId, key.id, or even _id
+                    const isMatch = (m.msgId === data.messageId) ||
+                        (m.key && m.key.id === data.messageId) ||
+                        (m._id === data.messageId) ||
+                        (data.message && data.message.key && m.msgId === data.message.key.id);
+
+                    if (isMatch) {
+                        console.log(`🔄 [In-State] Updating ${m.msgId} status to ${data.status}`);
+                        return { ...m, status: data.status };
+                    }
+                    return m;
+                });
+                return updated;
+            });
         });
 
         socketRef.current.on('message_reaction', (data) => {
@@ -497,7 +590,9 @@ export default function LiveChat() {
         return () => {
             socketRef.current.disconnect();
         };
-    }, [selectedChat, fetchConversations, markAsRead]);
+        // ✅ OPTIMIZATION: Removed 'selectedChat' to prevent reconnecting on every chat switch
+        // utilized 'selectedChatRef' inside listeners instead.
+    }, [fetchConversations, markAsRead]);
 
     // Initial Fetch
     useEffect(() => {
@@ -752,8 +847,11 @@ export default function LiveChat() {
     // --- REPLY HANDLERS ---
     const handleReply = (msg) => {
         setReplyingTo(msg);
-        // Focus input (optional but good UX)
-        // document.querySelector('textarea')?.focus();
+        // Focus input for better UX
+        setTimeout(() => {
+            const textarea = document.querySelector('textarea');
+            if (textarea) textarea.focus();
+        }, 50);
     };
 
     const cancelReply = () => {
@@ -899,8 +997,8 @@ export default function LiveChat() {
                     </div>
                 </div>
 
-                {/* List */}
-                <div className="flex-1 overflow-y-auto custom-scrollbar">
+                {/* List - VIRTUALIZED */}
+                <div className="flex-1 overflow-hidden relative flex flex-col">
                     {isLoadingChats ? (
                         <div className="flex flex-col items-center justify-center h-40 gap-3">
                             <div className="w-8 h-8 border-2 border-primary-500 border-t-transparent rounded-full animate-spin"></div>
@@ -914,613 +1012,707 @@ export default function LiveChat() {
                             <p className="text-gray-500 dark:text-gray-400 text-sm">Belum ada percakapan.<br />Pesan baru akan muncul di sini.</p>
                         </div>
                     ) : (
-                        filteredChats.map(chat => {
-                            const isActive = selectedChat?._id === chat._id;
-                            // chat._id adalah phoneNumber clean dari backend (sudah dinormalisasi)
-                            // chat.displayName sudah berisi nama lengkap atau "Unknown Contact"
-                            const phoneNumber = chat._id;
-                            const displayName = chat.displayName || 'Unknown Contact';
-                            // Di chat list, tampilkan hanya nama saja (tanpa nomor)
-                            const name = displayName;
-                            const rawContent = chat.lastMessage?.content || '';
-                            const lastMsg = rawContent === '[documentMessage]' ? '[Dokumen]' : rawContent === '[stickerMessage]' ? '[Sticker]' : (rawContent || '[Media]');
-                            const time = chat.lastMessage?.timestamp ? new Date(chat.lastMessage?.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
-                            const unread = chat.unreadCount > 0;
+                        <div className="flex-1 overflow-y-auto custom-scrollbar">
+                            {filteredChats.map(chat => {
+                                const isActive = selectedChat?._id === chat._id; // ✅ RESTORED
+                                let name = "Unknown";
+                                try {
+                                    // Logic: Saved Name > PushName > Phone
+                                    if (chat.isSaved && chat.displayName) {
+                                        name = chat.displayName;
+                                    } else if (chat.pushName) {
+                                        name = chat.pushName; // ✅ REMOVED '~'
+                                    } else if (chat.displayName && chat.displayName !== chat.cleanPhone && chat.displayName !== `+${chat.cleanPhone}`) {
 
-                            return (
-                                <div
-                                    key={chat._id}
-                                    onClick={() => {
-                                        if (selectedChat?._id !== chat._id) {
-                                            setMessages([]); // ✅ IMMEDATE CLEAR (Fixes Lag/Ghosting)
-                                            setHasMoreMessages(false);
-                                            setIsLoadingMessages(true);
-                                            setSelectedChat(chat);
+                                        name = chat.displayName;
+                                    } else if (chat.cleanPhone) {
+                                        name = `+${chat.cleanPhone}`;
+                                    } else {
+                                        name = String(chat._id || "").split("@")[0] || "Unknown";
+                                    }
+                                } catch (e) { name = "Error Name"; }
+
+                                let preview = "";
+                                try {
+                                    const msg = chat.lastMessage;
+                                    if (msg) {
+                                        if (typeof msg.content === "string") preview = msg.content;
+                                        else if (typeof msg.content === "object" && msg.content !== null) {
+                                            preview = msg.content.text || msg.content.caption || "[Media]";
                                         }
-                                    }}
-                                    className={`p-4 flex gap-3 cursor-pointer transition-colors border-b border-gray-50 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-[#202c33]
-                                ${isActive ? 'bg-primary-50/50 dark:bg-[#2a3942] border-r-4 border-r-primary-500' : ''}
-                            `}
-                                >
-                                    {/* Avatar */}
-                                    <ChatAvatar chat={chat} className="w-12 h-12" />
+                                    }
+                                } catch (e) { preview = "[Media]"; }
 
-                                    <div className="flex-1 min-w-0">
-                                        <div className="flex justify-between items-start mb-0.5">
-                                            <div className="flex flex-col gap-0.5 min-w-0">
-                                                <div className="flex items-center gap-2">
-                                                    <h3 className={`font-semibold truncate text-[15px] ${isActive ? 'text-navy-900 dark:text-white' : 'text-gray-900 dark:text-gray-100'} ${unread ? 'font-bold' : ''}`}>
-                                                        {name}
-                                                    </h3>
-                                                    {/* Tags inline with name */}
-                                                    <div className="flex gap-1 shrink-0">
-                                                        {getTagsForChat(chat).slice(0, 3).map((tag, i) => {
-                                                            const lowerTag = tag.toLowerCase();
-                                                            let colorClass = "bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400";
-                                                            if (lowerTag === 'royal') colorClass = "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300";
-                                                            if (lowerTag === 'gold') colorClass = "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300";
-                                                            if (lowerTag === 'platinum') colorClass = "bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300";
-                                                            if (lowerTag === 'vip') colorClass = "bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300";
+                                let timeStr = "";
+                                try {
+                                    // Use formatMessageTime helper if available or Date
+                                    if (chat.lastMessage?.timestamp) {
+                                        const date = new Date(chat.lastMessage.timestamp);
+                                        if (!isNaN(date.getTime())) {
+                                            timeStr = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+                                        }
+                                    }
+                                } catch (e) { }
 
-                                                            return (
-                                                                <span key={i} className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase ${colorClass}`}>
+                                let unreadCount = Number(chat.unreadCount) || 0;
+
+                                return (
+                                    <div
+                                        key={chat._id || Math.random()}
+                                        onClick={() => {
+                                            if (selectedChat?._id !== chat._id) {
+                                                setMessages([]);
+                                                setHasMoreMessages(false);
+                                                setIsLoadingMessages(true);
+                                                setSelectedChat(chat);
+                                            }
+                                        }}
+                                        className={`p-4 flex gap-3 cursor-pointer transition-colors border-b border-gray-50 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-[#202c33] h-[82px]
+                                                    ${isActive ? "bg-primary-50/50 dark:bg-[#2a3942] border-r-4 border-r-primary-500" : ""}
+                                                `}
+                                    >
+                                        {/* Avatar */}
+                                        <ChatAvatar chat={{ ...chat, displayName: name }} className="w-12 h-12 shrink-0" />
+
+                                        <div className="flex-1 min-w-0 flex flex-col justify-center">
+                                            <div className="flex justify-between items-start mb-0.5">
+                                                <div className="flex flex-col gap-0.5 min-w-0">
+                                                    <div className="flex items-center gap-2">
+                                                        <h3 className={`font-semibold truncate text-[15px] ${isActive ? "text-navy-900 dark:text-white" : "text-gray-900 dark:text-gray-100"} ${unreadCount > 0 ? "font-bold" : ""}`}>
+                                                            {name}
+                                                        </h3>
+                                                        {/* Tags */}
+                                                        <div className="flex gap-1 shrink-0">
+                                                            {(chat.tags || []).slice(0, 2).map((tag, i) => (
+                                                                <span key={i} className="text-[9px] px-1 py-0 rounded bg-gray-100 dark:bg-gray-700 text-gray-500 font-bold uppercase">
                                                                     {tag}
                                                                 </span>
-                                                            );
-                                                        })}
+                                                            ))}
+                                                        </div>
                                                     </div>
                                                 </div>
-                                            </div>
-                                            <span className={`text-[11px] font-medium flex-shrink-0 ${unread ? 'text-primary-600' : 'text-gray-400 dark:text-gray-500'}`}>
-                                                {time}
-                                            </span>
-                                        </div>
-
-                                        <div className="flex justify-between items-center">
-                                            <p className={`text-[13px] truncate max-w-[90%] ${unread ? 'font-semibold text-gray-800 dark:text-gray-200' : 'text-gray-500 dark:text-gray-400'}`}>
-                                                {chat.lastMessage?.fromMe && <span className="text-gray-400 mr-1">Anda:</span>}
-                                                {lastMsg}
-                                            </p>
-                                            {unread && (
-                                                <span className="w-5 h-5 rounded-full bg-primary-500 text-white text-[10px] flex items-center justify-center font-bold shadow-sm shadow-primary-500/30">
-                                                    {chat.unreadCount}
+                                                <span className={`text-[11px] font-medium flex-shrink-0 ${unreadCount > 0 ? "text-primary-600" : "text-gray-400 dark:text-gray-500"}`}>
+                                                    {timeStr}
                                                 </span>
-                                            )}
+                                            </div>
+                                            <div className="flex justify-between items-center">
+                                                <p className={`text-[13px] truncate max-w-[90%] ${unreadCount > 0 ? "font-semibold text-gray-800 dark:text-gray-200" : "text-gray-500 dark:text-gray-400"}`}>
+                                                    {chat.lastMessage?.fromMe && <span className="text-gray-400 mr-1">Anda:</span>}
+                                                    {preview}
+                                                </p>
+                                                {unreadCount > 0 && (
+                                                    <span className="w-5 h-5 rounded-full bg-primary-500 text-white text-[10px] flex items-center justify-center font-bold shadow-sm shadow-primary-500/30">
+                                                        {unreadCount}
+                                                    </span>
+                                                )}
+                                            </div>
                                         </div>
                                     </div>
-                                </div>
-                            );
-                        })
+                                );
+                            })}
+                        </div>
                     )}
                 </div>
             </div>
-
             {/* RIGHT: Chat Room */}
-            <div className={`flex-1 bg-[#efeae2] flex flex-col relative ${!selectedChat ? 'hidden md:flex' : 'flex'}`}>
+            < div className={`flex-1 bg-[#efeae2] flex flex-col relative ${!selectedChat ? 'hidden md:flex' : 'flex'}`
+            }>
 
                 {/* Background Pattern */}
-                <div className="absolute inset-0 opacity-[0.06] pointer-events-none"
+                < div className="absolute inset-0 opacity-[0.06] pointer-events-none"
                     style={{ backgroundImage: 'radial-gradient(#000 1px, transparent 1px)', backgroundSize: '20px 20px' }}
                 />
 
-                {selectedChat ? (
-                    <>
-                        {/* Chat Header */}
-                        <div className="h-16 px-4 bg-white dark:bg-[#202c33] border-b border-gray-200 dark:border-gray-700 flex items-center justify-between shadow-sm z-10">
-                            <div className="flex items-center gap-3">
-                                <button onClick={() => setSelectedChat(null)} className="md:hidden p-2 -ml-2 hover:bg-gray-100 dark:hover:bg-[#2a3942] rounded-full text-gray-600 dark:text-gray-300">
-                                    <ArrowLeft className="w-5 h-5" />
-                                </button>
+                {
+                    selectedChat ? (
+                        <>
+                            {/* Chat Header */}
+                            <div className="h-16 px-4 bg-white dark:bg-[#202c33] border-b border-gray-200 dark:border-gray-700 flex items-center justify-between shadow-sm z-10">
+                                <div className="flex items-center gap-3">
+                                    <button onClick={() => setSelectedChat(null)} className="md:hidden p-2 -ml-2 hover:bg-gray-100 dark:hover:bg-[#2a3942] rounded-full text-gray-600 dark:text-gray-300">
+                                        <ArrowLeft className="w-5 h-5" />
+                                    </button>
 
-                                <ChatAvatar chat={selectedChat} className="w-9 h-9" />
+                                    {/* Avatar - Sanitized for Header */}
+                                    <ChatAvatar
+                                        chat={{
+                                            ...selectedChat,
+                                            displayName: (typeof selectedChat?.displayName === 'object' ? 'Contact' : (selectedChat?.displayName || 'Unknown'))
+                                        }}
+                                        className="w-9 h-9"
+                                    />
 
-                                <div className="flex flex-col justify-center">
-                                    <div className="flex items-center gap-2">
-                                        {/* Header Tags */}
-                                        <div className="flex gap-1 shrink-0">
-                                            {getTagsForChat(selectedChat).map((tag, i) => {
-                                                const lowerTag = tag.toLowerCase();
-                                                let colorClass = "bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400";
-                                                if (lowerTag === 'royal') colorClass = "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300";
-                                                if (lowerTag === 'gold') colorClass = "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300";
-                                                if (lowerTag === 'platinum') colorClass = "bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300";
-                                                if (lowerTag === 'vip') colorClass = "bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300";
-
-                                                return (
-                                                    <span key={i} className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase ${colorClass}`}>
-                                                        {tag}
-                                                    </span>
-                                                );
-                                            })}
-                                        </div>
-                                        {/* Edit Tags Button */}
-                                        <button
-                                            onClick={() => setIsTagModalOpen(true)}
-                                            className="p-2 ml-1 text-gray-400 hover:text-primary-500 hover:bg-primary-50 rounded-full transition-colors"
-                                            title="Manage Tags"
-                                        >
-                                            <Edit className="w-4 h-4" />
-                                        </button>
-                                    </div>
-
-                                    {/* CHAT IDENTITY HEADER */}
                                     <div className="flex flex-col justify-center">
-                                        <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2 text-base">
-                                            {selectedChat.displayName || (selectedChat.cleanPhone ? `+${selectedChat.cleanPhone}` : 'Unknown Contact')}
-                                            {selectedChat.isSaved && selectedChat.hasStandardJid && (
-                                                <span className="p-0.5 bg-green-100 dark:bg-green-900 rounded">
-                                                    <MessageSquare size={12} className="text-green-600 dark:text-green-400" />
-                                                </span>
-                                            )}
-                                        </h3>
-                                        <p className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-2">
-                                            {/* Subtitle: ~PushName or Number */}
-                                            {!selectedChat.isSaved && selectedChat.pushName ? (
-                                                <span className="italic text-gray-400">~{selectedChat.pushName}</span>
-                                            ) : (
-                                                <span>{selectedChat.cleanPhone ? `+${selectedChat.cleanPhone}` : ''}</span>
-                                            )}
+                                        <div className="flex items-center gap-2">
+                                            {/* Header Tags */}
+                                            <div className="flex gap-1 shrink-0">
+                                                {getTagsForChat(selectedChat).map((tag, i) => {
+                                                    const lowerTag = tag.toLowerCase();
+                                                    let colorClass = "bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400";
+                                                    if (lowerTag === 'royal') colorClass = "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300";
+                                                    if (lowerTag === 'gold') colorClass = "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300";
+                                                    if (lowerTag === 'platinum') colorClass = "bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300";
+                                                    if (lowerTag === 'vip') colorClass = "bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300";
 
-                                            {/* Presence Indicator */}
-                                            {(() => {
-                                                const rawJid = selectedChat._id;
-                                                const presence = presenceMap[rawJid];
-                                                if (presence) {
-                                                    const participantValues = Object.values(presence);
-                                                    if (participantValues.length > 0) {
-                                                        const p = participantValues[0];
-                                                        if (p.lastKnownPresence === 'composing') return <span className="text-green-500 font-bold animate-pulse ml-2">sedang mengetik...</span>;
-                                                        if (p.lastKnownPresence === 'recording') return <span className="text-green-500 font-bold animate-pulse ml-2">merekam suara...</span>;
-                                                        if (p.lastKnownPresence === 'available') return <span className="text-green-500 font-bold ml-2">• Online</span>;
-                                                    }
-                                                }
-                                                return null;
-                                            })()}
-                                        </p>
+                                                    return (
+                                                        <span key={i} className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase ${colorClass}`}>
+                                                            {tag}
+                                                        </span>
+                                                    );
+                                                })}
+                                            </div>
+                                            {/* Edit Tags Button */}
+                                            <button
+                                                onClick={() => setIsTagModalOpen(true)}
+                                                className="p-2 ml-1 text-gray-400 hover:text-primary-500 hover:bg-primary-50 rounded-full transition-colors"
+                                                title="Manage Tags"
+                                            >
+                                                <Edit className="w-4 h-4" />
+                                            </button>
+                                        </div>
+
+                                        {/* CHAT IDENTITY HEADER - OPTIMIZED LAYOUT */}
+                                        <div className="flex flex-col justify-center gap-0.5">
+                                            {/* ✅ TITLE: Name (Saved) OR PushName OR Phone */}
+                                            <div className="flex flex-col">
+                                                <h3 className="font-bold text-gray-900 dark:text-white text-[16px] leading-tight flex items-center gap-2">
+                                                    {selectedChat.isSaved ? selectedChat.displayName : (selectedChat.pushName || selectedChat.displayName || selectedChat.cleanPhone)}
+
+                                                    {selectedChat.isSaved && selectedChat.hasStandardJid && (
+                                                        <span className="text-green-500 dark:text-green-400" title="Saved Contact">
+                                                            <UserCheck size={14} className="stroke-2" />
+                                                        </span>
+                                                    )}
+                                                </h3>
+
+                                                {/* Subtitle: Phone (if different from name) & Presence */}
+                                                <div className="text-xs text-gray-500 flex items-center gap-2 mt-0.5">
+                                                    {/* Show Phone if Name is shown and it's different */}
+                                                    {((selectedChat.isSaved || selectedChat.pushName) && selectedChat.cleanPhone !== selectedChat.displayName) && (
+                                                        <span>+{selectedChat.cleanPhone}</span>
+                                                    )}
+
+                                                    {/* Separator if both phone and presence exist */}
+                                                    {((selectedChat.isSaved || selectedChat.pushName) && selectedChat.cleanPhone !== selectedChat.displayName && presenceMap[selectedChat._id]) && (
+                                                        <span>•</span>
+                                                    )}
+
+                                                    {/* Robust Presence Logic */}
+                                                    {(() => {
+                                                        const rawJid = selectedChat._id;
+                                                        const presence = presenceMap[rawJid];
+                                                        if (presence) {
+                                                            const vals = typeof presence === 'string' ? [presence] : Object.values(presence);
+                                                            if (vals.length > 0) {
+                                                                const p = vals[0];
+                                                                const state = p.lastKnownPresence || p;
+                                                                if (state === 'composing') return <span className="text-green-500 font-medium italic text-xs">sedang mengetik...</span>;
+                                                                if (state === 'recording') return <span className="text-green-500 font-medium italic text-xs">merekam suara...</span>;
+                                                                if (state === 'available') return <span className="text-green-500 font-medium text-xs">• Online</span>;
+                                                            }
+                                                        }
+                                                        return null;
+                                                    })()}
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
+
+                                    {/* QUICK SAVE BUTTON */}
+                                    {selectedChat && !selectedChat.isSaved && !selectedChat.displayName?.includes('(') && (
+                                        <button
+                                            onClick={handleSaveContactClick}
+                                            className="hidden md:flex ml-2 px-3 py-1 bg-primary-100 text-primary-700 text-[10px] font-bold rounded-full border border-primary-200 hover:bg-primary-500 hover:text-white transition-all items-center gap-1 shadow-sm"
+                                            title="Simpan sebagai Customer"
+                                        >
+                                            <UserPlus className="w-3 h-3" />
+                                            SAVE
+                                        </button>
+                                    )}
                                 </div>
 
-                                {/* QUICK SAVE BUTTON */}
-                                {selectedChat && !selectedChat.isSaved && !selectedChat.displayName?.includes('(') && (
-                                    <button
-                                        onClick={handleSaveContactClick}
-                                        className="hidden md:flex ml-2 px-3 py-1 bg-primary-100 text-primary-700 text-[10px] font-bold rounded-full border border-primary-200 hover:bg-primary-500 hover:text-white transition-all items-center gap-1 shadow-sm"
-                                        title="Simpan sebagai Customer"
-                                    >
-                                        <UserPlus className="w-3 h-3" />
-                                        SAVE
-                                    </button>
-                                )}
-                            </div>
-
-                            <div className="flex items-center gap-2 text-gray-500 dark:text-gray-400 relative" ref={menuRef}>
-                                {isMessageSearchOpen ? (
-                                    <div className="flex items-center bg-gray-100 dark:bg-[#2a3942] rounded-full px-3 py-1 animate-in fade-in slide-in-from-right-2 duration-200">
-                                        <input
-                                            autoFocus
-                                            type="text"
-                                            placeholder="Cari pesan..."
-                                            className="bg-transparent border-none focus:ring-0 text-xs w-32 md:w-48 text-gray-700 dark:text-gray-200"
-                                            value={messageSearchQuery}
-                                            onChange={e => setMessageSearchQuery(e.target.value)}
-                                        />
+                                <div className="flex items-center gap-2 text-gray-500 dark:text-gray-400 relative" ref={menuRef}>
+                                    {isMessageSearchOpen ? (
+                                        <div className="flex items-center bg-gray-100 dark:bg-[#2a3942] rounded-full px-3 py-1 animate-in fade-in slide-in-from-right-2 duration-200">
+                                            <input
+                                                autoFocus
+                                                type="text"
+                                                placeholder="Cari pesan..."
+                                                className="bg-transparent border-none focus:ring-0 text-xs w-32 md:w-48 text-gray-700 dark:text-gray-200"
+                                                value={messageSearchQuery}
+                                                onChange={e => setMessageSearchQuery(e.target.value)}
+                                            />
+                                            <button
+                                                onClick={() => {
+                                                    setIsMessageSearchOpen(false);
+                                                    setMessageSearchQuery('');
+                                                }}
+                                                className="p-1 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-full"
+                                            >
+                                                <X className="w-3.5 h-3.5" />
+                                            </button>
+                                        </div>
+                                    ) : (
                                         <button
-                                            onClick={() => {
-                                                setIsMessageSearchOpen(false);
-                                                setMessageSearchQuery('');
-                                            }}
-                                            className="p-1 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-full"
+                                            onClick={() => setIsMessageSearchOpen(true)}
+                                            className="p-2 hover:bg-gray-100 dark:hover:bg-[#2a3942] rounded-full"
+                                            title="Cari di chat"
                                         >
-                                            <X className="w-3.5 h-3.5" />
+                                            <Search className="w-5 h-5" />
                                         </button>
-                                    </div>
-                                ) : (
+                                    )}
                                     <button
-                                        onClick={() => setIsMessageSearchOpen(true)}
                                         className="p-2 hover:bg-gray-100 dark:hover:bg-[#2a3942] rounded-full"
-                                        title="Cari di chat"
+                                        title="Opsi Lain"
+                                        onClick={() => setShowMenu(!showMenu)}
                                     >
-                                        <Search className="w-5 h-5" />
+                                        <MoreVertical className="w-5 h-5" />
                                     </button>
-                                )}
-                                <button
-                                    className="p-2 hover:bg-gray-100 dark:hover:bg-[#2a3942] rounded-full"
-                                    title="Opsi Lain"
-                                    onClick={() => setShowMenu(!showMenu)}
-                                >
-                                    <MoreVertical className="w-5 h-5" />
-                                </button>
 
-                                {/* Dropdown Menu */}
-                                {showMenu && (
-                                    <div className="absolute right-0 top-12 w-48 bg-white dark:bg-[#202c33] rounded-lg shadow-xl border border-gray-100 dark:border-gray-700 py-1 z-50">
-                                        <button
-                                            onClick={handleDeleteChat}
-                                            className="w-full text-left px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2"
-                                        >
-                                            <Trash2 className="w-4 h-4" />
-                                            Hapus Chat
-                                        </button>
+                                    {/* Dropdown Menu */}
+                                    {showMenu && (
+                                        <div className="absolute right-0 top-12 w-48 bg-white dark:bg-[#202c33] rounded-lg shadow-xl border border-gray-100 dark:border-gray-700 py-1 z-50">
+                                            <button
+                                                onClick={handleDeleteChat}
+                                                className="w-full text-left px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2"
+                                            >
+                                                <Trash2 className="w-4 h-4" />
+                                                Hapus Chat
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Messages Area */}
+                            <div
+                                ref={chatContainerRef}
+                                onScroll={handleScroll}
+                                className="flex-1 overflow-y-auto p-4 md:p-6 space-y-3 z-0 custom-scrollbar bg-[#efeae2] dark:bg-[#0b141a]"
+                            >
+                                {/* Loading More Spinner */}
+                                {isLoadingMore && (
+                                    <div className="flex justify-center py-2">
+                                        <div className="w-6 h-6 border-2 border-primary-500 border-t-transparent rounded-full animate-spin"></div>
                                     </div>
                                 )}
-                            </div>
-                        </div>
-
-                        {/* Messages Area */}
-                        <div
-                            ref={chatContainerRef}
-                            onScroll={handleScroll}
-                            className="flex-1 overflow-y-auto p-4 md:p-6 space-y-3 z-0 custom-scrollbar bg-[#efeae2] dark:bg-[#0b141a]"
-                        >
-                            {/* Loading More Spinner */}
-                            {isLoadingMore && (
-                                <div className="flex justify-center py-2">
-                                    <div className="w-6 h-6 border-2 border-primary-500 border-t-transparent rounded-full animate-spin"></div>
-                                </div>
-                            )}
-                            {filteredMessages.length === 0 && messageSearchQuery ? (
-                                <div className="flex flex-col items-center justify-center h-full text-gray-400">
-                                    <Search className="w-12 h-12 mb-2 opacity-20" />
-                                    <p className="text-sm">Tidak ada pesan yang cocok</p>
-                                </div>
-                            ) : filteredMessages.map((msg, idx) => (
-                                <div key={idx} className={`flex ${msg.fromMe ? 'justify-end' : 'justify-start'}`}>
-                                    <div className={`
+                                {filteredMessages.length === 0 && messageSearchQuery ? (
+                                    <div className="flex flex-col items-center justify-center h-full text-gray-400">
+                                        <Search className="w-12 h-12 mb-2 opacity-20" />
+                                        <p className="text-sm">Tidak ada pesan yang cocok</p>
+                                    </div>
+                                ) : filteredMessages.map((msg, idx) => (
+                                    <div key={idx} className={`flex ${msg.fromMe ? 'justify-end' : 'justify-start'}`}>
+                                        <div className={`
                                 relative group text-[14.2px] leading-[19px]
                                 ${(msg.messageType === 'sticker' || msg.content === '[Sticker]')
-                                            ? 'bg-transparent shadow-none p-0'
-                                            : `shadow-[0_1px_0.5px_rgba(11,20,26,0.13)] ${msg.mediaUrl ? 'p-1 rounded-xl max-w-[330px]' : 'px-3 py-1.5 rounded-lg max-w-[85%] md:max-w-[65%]'} 
+                                                ? 'bg-transparent shadow-none p-0'
+                                                : `shadow-[0_1px_0.5px_rgba(11,20,26,0.13)] ${msg.mediaUrl ? 'p-1 rounded-xl max-w-[330px]' : 'px-3 py-1.5 rounded-lg max-w-[85%] md:max-w-[65%]'} 
                                             ${msg.fromMe ? 'bg-[#d9fdd3] dark:bg-[#005c4b] rounded-tr-none' : 'bg-white dark:bg-[#202c33] rounded-tl-none'}
                                             ${msg.content && msg.content.includes('[AI]') ? 'border-l-4 border-l-purple-500 bg-[#f3e5f5] dark:bg-[#4a148c]/20' : ''}`}
                                 text-[#111b21] dark:text-[#e9edef]
                             `}>
-                                        {/* HANDLING MEDIA */}
-                                        {msg.mediaUrl ? (
-                                            <div className="relative overflow-hidden rounded-lg">
-                                                {(msg.messageType === 'sticker' || (msg.content === '[Sticker]' && msg.mediaUrl)) ? (
-                                                    <div className="relative">
-                                                        <img
+                                            {/* HANDLING MEDIA */}
+                                            {msg.mediaUrl ? (
+                                                <div className="relative overflow-hidden rounded-lg">
+                                                    {(msg.messageType === 'sticker' || (msg.content === '[Sticker]' && msg.mediaUrl)) ? (
+                                                        <div className="relative">
+                                                            <img
+                                                                src={`${API_URL.replace('/api', '')}${msg.mediaUrl}`}
+                                                                alt="Sticker"
+                                                                className="w-32 h-32 object-contain cursor-pointer transition-transform hover:scale-105"
+                                                                onClick={() => setSelectedImage(`${API_URL.replace('/api', '')}${msg.mediaUrl}`)}
+                                                            />
+                                                        </div>
+                                                    ) : msg.mediaType?.startsWith('image/') ? (
+                                                        <div className="relative">
+                                                            <img
+                                                                src={`${API_URL.replace('/api', '')}${msg.mediaUrl}`}
+                                                                alt="Sent Media"
+                                                                className="w-full h-auto max-h-[400px] object-cover rounded-lg cursor-pointer hover:opacity-95 transition-opacity"
+                                                                onClick={() => setSelectedImage(`${API_URL.replace('/api', '')}${msg.mediaUrl}`)}
+                                                            />
+                                                            {(!msg.content || msg.content === '[Image]') && (
+                                                                <div className="absolute bottom-0 right-0 w-full p-1.5 bg-gradient-to-t from-black/50 to-transparent flex justify-end items-center gap-1 rounded-b-lg">
+                                                                    <span className="text-[11px] text-white/90">
+                                                                        {formatMessageTime(msg.timestamp)}
+                                                                    </span>
+                                                                    {msg.fromMe && (
+                                                                        <CheckCheck size={15} className={`text-white/90 ${msg.status === 'read' ? 'text-blue-300' : ''}`} strokeWidth={1.5} />
+                                                                    )}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    ) : msg.mediaType?.startsWith('video/') ? (
+                                                        <video
+                                                            controls
+                                                            className="w-full h-auto max-h-[400px] bg-black/5 rounded-lg"
                                                             src={`${API_URL.replace('/api', '')}${msg.mediaUrl}`}
-                                                            alt="Sticker"
-                                                            className="w-32 h-32 object-contain cursor-pointer transition-transform hover:scale-105"
-                                                            onClick={() => setSelectedImage(`${API_URL.replace('/api', '')}${msg.mediaUrl}`)}
                                                         />
-                                                    </div>
-                                                ) : msg.mediaType?.startsWith('image/') ? (
-                                                    <div className="relative">
-                                                        <img
+                                                    ) : msg.mediaType?.startsWith('audio/') ? (
+                                                        <audio
+                                                            controls
+                                                            className="w-full min-w-[250px] h-10 mt-1"
                                                             src={`${API_URL.replace('/api', '')}${msg.mediaUrl}`}
-                                                            alt="Sent Media"
-                                                            className="w-full h-auto max-h-[400px] object-cover rounded-lg cursor-pointer hover:opacity-95 transition-opacity"
-                                                            onClick={() => setSelectedImage(`${API_URL.replace('/api', '')}${msg.mediaUrl}`)}
                                                         />
-                                                        {/* Timestamp Overlay for Images */}
-                                                        {(!msg.content || msg.content === '[Image]') && (
-                                                            <div className="absolute bottom-0 right-0 w-full p-1.5 bg-gradient-to-t from-black/50 to-transparent flex justify-end items-center gap-1 rounded-b-lg">
-                                                                <span className="text-[11px] text-white/90">
-                                                                    {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}
-                                                                </span>
-                                                                {msg.fromMe && (
-                                                                    <CheckCheck size={15} className={`text-white/90 ${msg.status === 'read' ? 'text-blue-300' : ''}`} strokeWidth={1.5} />
-                                                                )}
+                                                    ) : (
+                                                        <a
+                                                            href={`${API_URL.replace('/api', '')}${msg.mediaUrl}`}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="flex items-center gap-3 bg-gray-50/50 p-3 rounded-lg border border-gray-100 hover:bg-gray-100 transition-colors"
+                                                        >
+                                                            <div className="p-2 bg-white rounded-full shadow-sm text-blue-600">
+                                                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" /><polyline points="14 2 14 8 20 8" /></svg>
                                                             </div>
-                                                        )}
+                                                            <div className="flex flex-col overflow-hidden">
+                                                                <span className="text-sm font-medium text-gray-700 truncate">
+                                                                    File Attachment
+                                                                </span>
+                                                                <span className="text-xs text-blue-500 underline truncate max-w-[150px]">
+                                                                    Click to Download
+                                                                </span>
+                                                            </div>
+                                                        </a>
+                                                    )}
+                                                </div>
+                                            ) : (['image', 'video', 'audio', 'document', 'sticker'].includes(msg.messageType)) ? (
+                                                // 🛑 MANUAL DOWNLOAD UI
+                                                <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-3 flex flex-col items-center justify-center gap-2 border border-gray-200 dark:border-gray-700 w-64">
+                                                    <div className="p-3 bg-gray-200 dark:bg-gray-700 rounded-full text-gray-500 dark:text-gray-400">
+                                                        <Download className="w-6 h-6" />
                                                     </div>
-                                                ) : msg.mediaType?.startsWith('video/') ? (
-                                                    <video
-                                                        controls
-                                                        className="w-full h-auto max-h-[400px] bg-black/5 rounded-lg"
-                                                        src={`${API_URL.replace('/api', '')}${msg.mediaUrl}`}
-                                                    />
-                                                ) : msg.mediaType?.startsWith('audio/') ? (
-                                                    <audio
-                                                        controls
-                                                        className="w-full min-w-[250px] h-10 mt-1"
-                                                        src={`${API_URL.replace('/api', '')}${msg.mediaUrl}`}
-                                                    />
-                                                ) : (
-                                                    <a
-                                                        href={`${API_URL.replace('/api', '')}${msg.mediaUrl}`}
-                                                        target="_blank"
-                                                        rel="noopener noreferrer"
-                                                        className="flex items-center gap-3 bg-gray-50/50 p-3 rounded-lg border border-gray-100 hover:bg-gray-100 transition-colors"
+                                                    <div className="text-center">
+                                                        <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+                                                            {msg.messageType === 'image' ? 'Foto' : msg.messageType === 'video' ? 'Video' : msg.messageType}
+                                                        </p>
+                                                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                                                            Klik untuk mengunduh
+                                                        </p>
+                                                    </div>
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation(); // Prevent bubble click
+                                                            handleManualDownload(msg);
+                                                        }}
+                                                        className="mt-1 px-4 py-1.5 bg-primary-600 hover:bg-primary-700 text-white text-xs font-bold rounded-full transition-colors flex items-center gap-1"
                                                     >
-                                                        <div className="p-2 bg-white rounded-full shadow-sm text-blue-600">
-                                                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" /><polyline points="14 2 14 8 20 8" /></svg>
-                                                        </div>
-                                                        <div className="flex flex-col overflow-hidden">
-                                                            <span className="text-sm font-medium text-gray-700 truncate">
-                                                                File Attachment
+                                                        <Download className="w-3 h-3" />
+                                                        DOWNLOAD
+                                                    </button>
+                                                </div>
+                                            ) : (msg.content === '[Image]' || msg.messageType === 'image') ? (
+                                                <div className="bg-gray-100 rounded-lg w-full h-48 flex flex-col items-center justify-center text-gray-400 mb-2 border-2 border-dashed border-gray-200">
+                                                    {/* Fallback old placeholder if types mismatch */}
+                                                    <span className="text-xs font-medium">Image Placeholder</span>
+                                                </div>
+                                            ) : null}
+
+                                            {/* QUOTED MESSAGE BLOCK */}
+                                            {msg.quotedMsg && (
+                                                <div className={`mb-1 rounded-[5px] overflow-hidden border-l-[4px] bg-black/5 dark:bg-black/20 p-1.5 cursor-pointer flex flex-col ${msg.fromMe ? 'border-[#069986] bg-[#cfe9ba] dark:bg-[#025144]' : 'border-[#917c9e] bg-[#f5f6f6] dark:bg-[#1f2c33]'}`}>
+                                                    <span className={`text-[11.5px] font-bold mb-0.5 ${msg.fromMe ? 'text-[#046a5d] dark:text-[#00a884]' : 'text-[#6e587b] dark:text-[#d1d7db]'}`}>
+                                                        {(() => {
+                                                            // ✅ SMART NAME RESOLUTION FOR QUOTED MESSAGE
+                                                            const participantJid = msg.quotedMsg.participant;
+
+                                                            // Case 1: Quoted message is from me
+                                                            if (msg.quotedMsg.fromMe || participantJid === 'me' || !participantJid) {
+                                                                return 'Anda';
+                                                            }
+
+                                                            // Case 2: Quoted message is from the contact we're chatting with
+                                                            if (selectedChat) {
+                                                                const participantPhone = participantJid?.split('@')[0]?.split(':')[0];
+                                                                const chatPhone = selectedChat._id?.split('@')[0]?.split(':')[0];
+
+                                                                if (participantPhone === chatPhone) {
+                                                                    // Use chat's display name
+                                                                    return selectedChat.displayName || selectedChat.lastMessage?.pushName || `+${participantPhone}`;
+                                                                }
+                                                            }
+
+                                                            // Case 3: Fallback - use pushName from quoted message or phone number
+                                                            if (msg.quotedMsg.pushName && msg.quotedMsg.pushName !== 'Unknown') {
+                                                                return msg.quotedMsg.pushName;
+                                                            }
+
+                                                            // Case 4: Last resort - format phone number nicely
+                                                            const phoneNumber = participantJid?.split('@')[0]?.split(':')[0];
+                                                            return phoneNumber ? `+${phoneNumber}` : 'User';
+                                                        })()}
+                                                    </span>
+                                                    <p className="text-[12px] text-gray-600 dark:text-gray-300 line-clamp-2 leading-tight">
+                                                        {msg.quotedMsg.content}
+                                                    </p>
+                                                </div>
+                                            )}
+
+                                            {/* TEXT CONTENT (If exists and not just [Image]) */}
+                                            {(msg.content && (typeof msg.content !== 'string' || !['[Image]', '[Video]', '[audioMessage]', '[documentMessage]', '[stickerMessage]', '[Sticker]'].some(tag => msg.content.includes(tag)))) && (
+                                                <div className={`${msg.mediaUrl ? 'px-2 pb-1 pt-1' : 'px-2 py-1 relative'}`}>
+                                                    {/* Message Text with "Read More" like behavior if needed */}
+                                                    <div className="text-[14.2px] text-[#111b21] dark:text-[#e9edef] leading-[19px] whitespace-pre-wrap break-words">
+                                                        {/* ✅ FIXED: Handle object content safely */}
+                                                        {typeof msg.content === 'string' ? msg.content : (msg.content?.text || msg.content?.caption || '[Content]')}
+
+                                                        {/* Metadata/Timestamp Container - Uses float to sit at bottom right */}
+                                                        <span className="inline-block align-bottom h-[15px] w-[60px]"></span> {/* Spacer to prevent overlap */}
+                                                        <div className="float-right -mt-[6px] ml-2 flex items-center gap-1 h-[15px] select-none">
+                                                            <span className="text-[11px] text-[hsla(0,0%,7%,0.45)] dark:text-[hsla(0,0%,100%,0.45)] relative top-[3px]">
+                                                                {formatMessageTime(msg.timestamp)}
                                                             </span>
-                                                            <span className="text-xs text-blue-500 underline truncate max-w-[150px]">
-                                                                Click to Download
-                                                            </span>
-                                                        </div>
-                                                    </a>
-                                                )}
-                                            </div>
-                                        ) : (msg.content === '[Image]' || msg.messageType === 'image') ? (
-                                            <div className="bg-gray-100 rounded-lg w-full h-48 flex flex-col items-center justify-center text-gray-400 mb-2 border-2 border-dashed border-gray-200">
-                                                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mb-2"><rect width="18" height="18" x="3" y="3" rx="2" ry="2" /><circle cx="9" cy="9" r="2" /><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" /></svg>
-                                                <span className="text-xs font-medium">Image Placeholder</span>
-                                            </div>
-                                        ) : null}
-
-                                        {/* QUOTED MESSAGE BLOCK */}
-                                        {msg.quotedMsg && (
-                                            <div className={`mb-1 rounded-[5px] overflow-hidden border-l-[4px] bg-black/5 dark:bg-black/20 p-1.5 cursor-pointer flex flex-col ${msg.fromMe ? 'border-[#069986] bg-[#cfe9ba] dark:bg-[#025144]' : 'border-[#917c9e] bg-[#f5f6f6] dark:bg-[#1f2c33]'}`}>
-                                                <span className={`text-[11.5px] font-bold mb-0.5 ${msg.fromMe ? 'text-[#046a5d] dark:text-[#00a884]' : 'text-[#6e587b] dark:text-[#d1d7db]'}`}>
-                                                    {msg.quotedMsg.participant?.split('@')[0] || 'User'}
-                                                </span>
-                                                <p className="text-[12px] text-gray-600 dark:text-gray-300 line-clamp-2 leading-tight">
-                                                    {msg.quotedMsg.content}
-                                                </p>
-                                            </div>
-                                        )}
-
-                                        {/* TEXT CONTENT (If exists and not just [Image]) */}
-                                        {(!msg.mediaUrl || (msg.content && !msg.content.includes('[Image]') && !msg.content.includes('[Video]') && !msg.content.includes('[audioMessage]') && !msg.content.includes('[documentMessage]') && !msg.content.includes('[stickerMessage]') && !msg.content.includes('[Sticker]'))) && (
-                                            <div className={`${msg.mediaUrl ? 'px-2 pb-1 pt-1' : 'px-2 py-1 relative'}`}>
-                                                {/* Message Text with "Read More" like behavior if needed */}
-                                                <div className="text-[14.2px] text-[#111b21] dark:text-[#e9edef] leading-[19px] whitespace-pre-wrap break-words">
-                                                    {msg.content}
-
-                                                    {/* Metadata/Timestamp Container - Uses float to sit at bottom right */}
-                                                    <span className="inline-block align-bottom h-[15px] w-[60px]"></span> {/* Spacer to prevent overlap */}
-                                                    <div className="float-right -mt-[6px] ml-2 flex items-center gap-1 h-[15px] select-none">
-                                                        <span className="text-[11px] text-[hsla(0,0%,7%,0.45)] dark:text-[hsla(0,0%,100%,0.45)] relative top-[3px]">
-                                                            {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}
-                                                        </span>
-                                                        {msg.fromMe && (
-                                                            <span className={`relative top-[3px] ml-1 ${msg.status === 'read' ? 'text-blue-500' : 'text-gray-400'}`}>
-                                                                {/* 
+                                                            {msg.fromMe && (
+                                                                <span className={`relative top-[3px] ml-1 ${msg.status === 'read' ? 'text-blue-500' : 'text-gray-400'}`}>
+                                                                    {/* 
                                                                     1. Single Grey Tick: Sent / Pending (Offline)
                                                                     2. Double Grey Tick: Delivered (Online but not read)
                                                                     3. Double Blue Tick: Read
                                                                 */}
-                                                                {(msg.status === 'read') ? (
-                                                                    <CheckCheck size={16} strokeWidth={1.5} />
-                                                                ) : (msg.status === 'delivered') ? (
-                                                                    <CheckCheck size={16} strokeWidth={1.5} />
-                                                                ) : (
-                                                                    <Check size={16} strokeWidth={1.5} />
-                                                                )}
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        {/* HOVER ACTIONS: REPLY & REACT */}
-                                        <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 z-10 bg-white/80 dark:bg-black/40 rounded-full p-0.5 shadow-sm">
-                                            {/* REACTION BUTTON WITH MENU */}
-                                            <div className="relative group/reaction">
-                                                <button
-                                                    className="p-1 rounded-full text-gray-500 hover:text-yellow-500 transition-colors"
-                                                    title="React"
-                                                >
-                                                    <Smile size={14} />
-                                                </button>
-                                                {/* EMOJI MENU (Hover) */}
-                                                <div className="absolute bottom-full mb-2 right-0 hidden group-hover/reaction:flex bg-white dark:bg-gray-800 rounded-full shadow-lg border border-gray-100 dark:border-gray-700 p-1 gap-1 animate-in zoom-in-95 duration-200 z-50">
-                                                    {['👍', '❤️', '😂', '😮', '😢', '🙏'].map(emoji => (
-                                                        <button
-                                                            key={emoji}
-                                                            onClick={(e) => {
-                                                                e.stopPropagation();
-                                                                handleSendReaction(msg, emoji);
-                                                            }}
-                                                            className="hover:scale-125 transition-transform text-lg p-1"
-                                                        >
-                                                            {emoji}
-                                                        </button>
-                                                    ))}
-                                                </div>
-                                            </div>
-
-                                            <button
-                                                onClick={() => handleReply(msg)}
-                                                className="p-1 rounded-full text-gray-500 hover:text-primary-500 transition-colors"
-                                                title="Reply"
-                                            >
-                                                <Reply size={14} />
-                                            </button>
-                                        </div>
-
-                                        {/* REACTIONS DISPLAY */}
-                                        {msg.reactions && msg.reactions.length > 0 && (
-                                            <div className="absolute -bottom-2 right-2 bg-white dark:bg-gray-800 rounded-full px-1.5 py-0.5 shadow-sm border border-gray-200 dark:border-gray-700 flex items-center gap-1 text-[10px] z-10 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
-                                                {(() => {
-                                                    // Group reactions by text
-                                                    const counts = {};
-                                                    msg.reactions.forEach(r => {
-                                                        counts[r.text] = (counts[r.text] || 0) + 1;
-                                                    });
-                                                    // Get top 3
-                                                    const sortedEmojis = Object.keys(counts).sort((a, b) => counts[b] - counts[a]).slice(0, 3);
-
-                                                    return (
-                                                        <>
-                                                            {sortedEmojis.map(emoji => (
-                                                                <span key={emoji}>{emoji}</span>
-                                                            ))}
-                                                            {msg.reactions.length > 1 && (
-                                                                <span className="text-gray-500 dark:text-gray-400 font-medium ml-0.5">
-                                                                    {msg.reactions.length}
+                                                                    {(msg.status === 'read') ? (
+                                                                        <CheckCheck size={16} strokeWidth={1.5} />
+                                                                    ) : (msg.status === 'delivered') ? (
+                                                                        <CheckCheck size={16} strokeWidth={1.5} />
+                                                                    ) : (
+                                                                        <Check size={16} strokeWidth={1.5} />
+                                                                    )}
                                                                 </span>
                                                             )}
-                                                        </>
-                                                    )
-                                                })()}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {/* HOVER ACTIONS: REPLY & REACT */}
+                                            <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 z-10 bg-white/80 dark:bg-black/40 rounded-full p-0.5 shadow-sm">
+                                                {/* REACTION BUTTON WITH MENU */}
+                                                <div className="relative group/reaction">
+                                                    <button
+                                                        className="p-1 rounded-full text-gray-500 hover:text-yellow-500 transition-colors"
+                                                        title="React"
+                                                    >
+                                                        <Smile size={14} />
+                                                    </button>
+                                                    {/* EMOJI MENU (Hover) - Added bridge and padding */}
+                                                    <div className="absolute bottom-full mb-1 -right-2 hidden group-hover/reaction:flex bg-white dark:bg-gray-800 rounded-full shadow-lg border border-gray-100 dark:border-gray-700 p-1 gap-1 animate-in zoom-in-95 duration-200 z-50 pb-2">
+                                                        {['👍', '❤️', '😂', '😮', '😢', '🙏'].map(emoji => (
+                                                            <button
+                                                                key={emoji}
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    handleSendReaction(msg, emoji);
+                                                                }}
+                                                                className="hover:scale-125 transition-transform text-lg p-1"
+                                                            >
+                                                                {emoji}
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                </div>
+
+                                                <button
+                                                    onClick={() => handleReply(msg)}
+                                                    className="p-1 rounded-full text-gray-500 hover:text-primary-500 transition-colors"
+                                                    title="Reply"
+                                                >
+                                                    <Reply size={14} />
+                                                </button>
+                                            </div>
+
+                                            {/* REACTIONS DISPLAY */}
+                                            {msg.reactions && msg.reactions.length > 0 && (
+                                                <div className="absolute -bottom-2 right-2 bg-white dark:bg-gray-800 rounded-full px-1.5 py-0.5 shadow-sm border border-gray-200 dark:border-gray-700 flex items-center gap-1 text-[10px] z-10 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+                                                    {(() => {
+                                                        // Group reactions by text
+                                                        const counts = {};
+                                                        msg.reactions.forEach(r => {
+                                                            counts[r.text] = (counts[r.text] || 0) + 1;
+                                                        });
+                                                        // Get top 3
+                                                        const sortedEmojis = Object.keys(counts).sort((a, b) => counts[b] - counts[a]).slice(0, 3);
+
+                                                        return (
+                                                            <>
+                                                                {sortedEmojis.map(emoji => (
+                                                                    <span key={emoji}>{emoji}</span>
+                                                                ))}
+                                                                {msg.reactions.length > 1 && (
+                                                                    <span className="text-gray-500 dark:text-gray-400 font-medium ml-0.5">
+                                                                        {msg.reactions.length}
+                                                                    </span>
+                                                                )}
+                                                            </>
+                                                        )
+                                                    })()}
+                                                </div>
+                                            )}
+
+                                        </div>
+                                    </div>
+                                ))}
+                                <div ref={messagesEndRef} />
+                            </div>
+
+                            {/* Input Area */}
+                            <div className="px-2 py-2 md:px-4 md:py-3 bg-[#f0f2f5] border-t border-gray-200 z-10 w-full relative">
+                                <div className="max-w-4xl mx-auto flex items-end gap-2 relative">
+
+                                    {/* ATTACHMENT BUTTON & MENU */}
+                                    <div className="relative pb-1">
+                                        {showAttachMenu && (
+                                            <div className="absolute bottom-14 left-0 mb-2 flex flex-col gap-3 bg-white p-4 rounded-xl shadow-[0_4px_20px_rgba(0,0,0,0.1)] animate-in slide-in-from-bottom-2 fade-in duration-200 min-w-[160px] z-50">
+                                                <button onClick={() => triggerFileUpload('image')} className="flex items-center gap-3 hover:bg-gray-50 p-2 rounded-lg transition-colors text-gray-700 group">
+                                                    <div className="p-2 bg-purple-100 group-hover:bg-purple-200 text-purple-600 rounded-full transition-colors">
+                                                        <ImageIcon size={20} />
+                                                    </div>
+                                                    <span className="text-sm font-medium">Foto & Video</span>
+                                                </button>
+                                                <button onClick={() => triggerFileUpload('video')} className="flex items-center gap-3 hover:bg-gray-50 p-2 rounded-lg transition-colors text-gray-700 group">
+                                                    <div className="p-2 bg-pink-100/50 text-pink-600 rounded-full transition-colors">
+                                                        <Video size={20} />
+                                                    </div>
+                                                    <span className="text-sm font-medium">Video</span>
+                                                </button>
+                                                <button onClick={() => triggerFileUpload('document')} className="flex items-center gap-3 hover:bg-gray-50 p-2 rounded-lg transition-colors text-gray-700 group">
+                                                    <div className="p-2 bg-blue-100 group-hover:bg-blue-200 text-blue-600 rounded-full transition-colors">
+                                                        <FileText size={20} />
+                                                    </div>
+                                                    <span className="text-sm font-medium">Dokumen</span>
+                                                </button>
+                                                <button onClick={() => triggerFileUpload('audio')} className="flex items-center gap-3 hover:bg-gray-50 p-2 rounded-lg transition-colors text-gray-700 group">
+                                                    <div className="p-2 bg-orange-100 group-hover:bg-orange-200 text-orange-600 rounded-full transition-colors">
+                                                        <Music size={20} />
+                                                    </div>
+                                                    <span className="text-sm font-medium">Audio</span>
+                                                </button>
                                             </div>
                                         )}
 
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowAttachMenu(!showAttachMenu)}
+                                            className={`p-2 rounded-full transition-all ${showAttachMenu ? 'bg-gray-200 text-gray-600 rotate-45' : 'text-[#54656f] hover:bg-gray-200'}`}
+                                        >
+                                            <div className="flex items-center justify-center">
+                                                {/* Plus Icon Style like WhatsApp */}
+                                                <svg viewBox="0 0 24 24" height="24" width="24" preserveAspectRatio="xMidYMid meet" version="1.1" x="0px" y="0px" enableBackground="new 0 0 24 24"><path fill="currentColor" d="M19,11h-6V5h-2v6H5v2h6v6h2v-6h6V11z"></path></svg>
+                                            </div>
+                                        </button>
+                                        <input
+                                            type="file"
+                                            ref={fileInputRef}
+                                            className="hidden"
+                                            onChange={handleFileSelect}
+                                        />
                                     </div>
-                                </div>
-                            ))}
-                            <div ref={messagesEndRef} />
-                        </div>
 
-                        {/* Input Area */}
-                        <div className="px-2 py-2 md:px-4 md:py-3 bg-[#f0f2f5] border-t border-gray-200 z-10 w-full relative">
-                            <div className="max-w-4xl mx-auto flex items-end gap-2 relative">
 
-                                {/* ATTACHMENT BUTTON & MENU */}
-                                <div className="relative pb-1">
-                                    {showAttachMenu && (
-                                        <div className="absolute bottom-14 left-0 mb-2 flex flex-col gap-3 bg-white p-4 rounded-xl shadow-[0_4px_20px_rgba(0,0,0,0.1)] animate-in slide-in-from-bottom-2 fade-in duration-200 min-w-[160px] z-50">
-                                            <button onClick={() => triggerFileUpload('image')} className="flex items-center gap-3 hover:bg-gray-50 p-2 rounded-lg transition-colors text-gray-700 group">
-                                                <div className="p-2 bg-purple-100 group-hover:bg-purple-200 text-purple-600 rounded-full transition-colors">
-                                                    <ImageIcon size={20} />
-                                                </div>
-                                                <span className="text-sm font-medium">Foto & Video</span>
-                                            </button>
-                                            <button onClick={() => triggerFileUpload('video')} className="flex items-center gap-3 hover:bg-gray-50 p-2 rounded-lg transition-colors text-gray-700 group">
-                                                <div className="p-2 bg-pink-100/50 text-pink-600 rounded-full transition-colors">
-                                                    <Video size={20} />
-                                                </div>
-                                                <span className="text-sm font-medium">Video</span>
-                                            </button>
-                                            <button onClick={() => triggerFileUpload('document')} className="flex items-center gap-3 hover:bg-gray-50 p-2 rounded-lg transition-colors text-gray-700 group">
-                                                <div className="p-2 bg-blue-100 group-hover:bg-blue-200 text-blue-600 rounded-full transition-colors">
-                                                    <FileText size={20} />
-                                                </div>
-                                                <span className="text-sm font-medium">Dokumen</span>
-                                            </button>
-                                            <button onClick={() => triggerFileUpload('audio')} className="flex items-center gap-3 hover:bg-gray-50 p-2 rounded-lg transition-colors text-gray-700 group">
-                                                <div className="p-2 bg-orange-100 group-hover:bg-orange-200 text-orange-600 rounded-full transition-colors">
-                                                    <Music size={20} />
-                                                </div>
-                                                <span className="text-sm font-medium">Audio</span>
+
+                                    {/* REPLY BANNER */}
+                                    {replyingTo && (
+                                        <div className="absolute bottom-full left-0 right-0 mx-2 mb-2 bg-white dark:bg-[#1f2c33] border-l-[4px] border-[#00a884] rounded-lg shadow-[0_-2px_5px_rgba(0,0,0,0.05)] p-2 flex justify-between items-center z-20 animate-in slide-in-from-bottom-2 duration-200">
+                                            <div className="flex flex-col overflow-hidden w-full mr-4 text-sm">
+                                                <span className="font-bold text-[#00a884] mb-0.5">
+                                                    {replyingTo.fromMe ? 'Anda' : (replyingTo.pushName || 'User')}
+                                                </span>
+                                                <p className="text-gray-500 dark:text-gray-300 truncate">
+                                                    {replyingTo.content}
+                                                </p>
+                                            </div>
+                                            <button onClick={cancelReply} className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full text-gray-400">
+                                                <X size={18} />
                                             </button>
                                         </div>
                                     )}
 
-                                    <button
-                                        type="button"
-                                        onClick={() => setShowAttachMenu(!showAttachMenu)}
-                                        className={`p-2 rounded-full transition-all ${showAttachMenu ? 'bg-gray-200 text-gray-600 rotate-45' : 'text-[#54656f] hover:bg-gray-200'}`}
-                                    >
-                                        <div className="flex items-center justify-center">
-                                            {/* Plus Icon Style like WhatsApp */}
-                                            <svg viewBox="0 0 24 24" height="24" width="24" preserveAspectRatio="xMidYMid meet" version="1.1" x="0px" y="0px" enableBackground="new 0 0 24 24"><path fill="currentColor" d="M19,11h-6V5h-2v6H5v2h6v6h2v-6h6V11z"></path></svg>
+                                    {/* INPUT FORM OR RECORDER UI */}
+                                    {isRecording ? (
+                                        <div className="flex-1 flex items-center justify-between bg-white rounded-lg p-2 px-4 shadow-sm border border-red-100 animate-in fade-in duration-200">
+                                            <div className="flex items-center gap-3">
+                                                <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
+                                                <span className="text-red-600 font-mono font-medium text-lg min-w-[50px]">
+                                                    {formatDuration(recordingDuration)}
+                                                </span>
+                                                <span className="text-sm text-gray-500">Merekam...</span>
+                                            </div>
+
+                                            <div className="flex items-center gap-2">
+                                                <button
+                                                    type="button"
+                                                    onClick={cancelRecording}
+                                                    className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"
+                                                    title="Batal"
+                                                >
+                                                    <Trash2 size={20} />
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={stopRecording}
+                                                    className="p-2 bg-[#00a884] text-white hover:bg-[#008f6f] rounded-full transition-colors shadow-sm"
+                                                    title="Kirim"
+                                                >
+                                                    <Send size={18} className="translate-x-0.5" />
+                                                </button>
+                                            </div>
                                         </div>
-                                    </button>
-                                    <input
-                                        type="file"
-                                        ref={fileInputRef}
-                                        className="hidden"
-                                        onChange={handleFileSelect}
-                                    />
+                                    ) : (
+                                        <form onSubmit={handleSendMessage} className="flex-1 flex items-end gap-2">
+                                            <div className="flex-1 bg-white rounded-lg flex items-center shadow-sm border border-white focus-within:border-white py-1 transition-all">
+                                                <textarea
+                                                    rows={1}
+                                                    value={inputText}
+                                                    onChange={e => setInputText(e.target.value)}
+                                                    onKeyDown={e => {
+                                                        if (e.key === 'Enter' && !e.shiftKey) {
+                                                            e.preventDefault();
+                                                            handleSendMessage(e);
+                                                        }
+                                                    }}
+                                                    placeholder="Ketik pesan"
+                                                    className="w-full px-4 py-2 bg-transparent border-none focus:ring-0 text-[15px] resize-none max-h-32 text-[#111b21] placeholder-[#54656f] leading-6"
+                                                    style={{ minHeight: '24px', maxHeight: '100px' }}
+                                                />
+                                            </div>
+
+                                            {inputText.trim() ? (
+                                                <button
+                                                    type="submit"
+                                                    className="p-2.5 bg-[#00a884] text-white rounded-full hover:bg-[#008f6f] transition-all shadow-sm mb-1"
+                                                >
+                                                    <svg viewBox="0 0 24 24" height="24" width="24" preserveAspectRatio="xMidYMid meet" version="1.1" x="0px" y="0px" enableBackground="new 0 0 24 24"><path fill="currentColor" d="M1.101,21.757L23.8,12.028L1.101,2.3l0.011,7.912l13.623,1.816L1.112,13.845 L1.101,21.757z"></path></svg>
+                                                </button>
+                                            ) : (
+                                                // Real Voice Recorder Trigger
+                                                <button
+                                                    type="button"
+                                                    onClick={startRecording}
+                                                    className="p-2.5 text-[#54656f] hover:bg-gray-200 rounded-full transition-all mb-1"
+                                                    title="Tahan untuk merekam"
+                                                >
+                                                    <Mic size={24} />
+                                                </button>
+                                            )}
+                                        </form>
+                                    )}
                                 </div>
+                            </div>
 
-
-
-                                {/* REPLY BANNER */}
-                                {replyingTo && (
-                                    <div className="absolute bottom-full left-0 right-0 mx-2 mb-2 bg-white dark:bg-[#1f2c33] border-l-[4px] border-[#00a884] rounded-lg shadow-[0_-2px_5px_rgba(0,0,0,0.05)] p-2 flex justify-between items-center z-20 animate-in slide-in-from-bottom-2 duration-200">
-                                        <div className="flex flex-col overflow-hidden w-full mr-4 text-sm">
-                                            <span className="font-bold text-[#00a884] mb-0.5">
-                                                {replyingTo.fromMe ? 'Anda' : (replyingTo.pushName || 'User')}
-                                            </span>
-                                            <p className="text-gray-500 dark:text-gray-300 truncate">
-                                                {replyingTo.content}
-                                            </p>
-                                        </div>
-                                        <button onClick={cancelReply} className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full text-gray-400">
-                                            <X size={18} />
-                                        </button>
-                                    </div>
-                                )}
-
-                                {/* INPUT FORM OR RECORDER UI */}
-                                {isRecording ? (
-                                    <div className="flex-1 flex items-center justify-between bg-white rounded-lg p-2 px-4 shadow-sm border border-red-100 animate-in fade-in duration-200">
-                                        <div className="flex items-center gap-3">
-                                            <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
-                                            <span className="text-red-600 font-mono font-medium text-lg min-w-[50px]">
-                                                {formatDuration(recordingDuration)}
-                                            </span>
-                                            <span className="text-sm text-gray-500">Merekam...</span>
-                                        </div>
-
-                                        <div className="flex items-center gap-2">
-                                            <button
-                                                type="button"
-                                                onClick={cancelRecording}
-                                                className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"
-                                                title="Batal"
-                                            >
-                                                <Trash2 size={20} />
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={stopRecording}
-                                                className="p-2 bg-[#00a884] text-white hover:bg-[#008f6f] rounded-full transition-colors shadow-sm"
-                                                title="Kirim"
-                                            >
-                                                <Send size={18} className="translate-x-0.5" />
-                                            </button>
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <form onSubmit={handleSendMessage} className="flex-1 flex items-end gap-2">
-                                        <div className="flex-1 bg-white rounded-lg flex items-center shadow-sm border border-white focus-within:border-white py-1 transition-all">
-                                            <textarea
-                                                rows={1}
-                                                value={inputText}
-                                                onChange={e => setInputText(e.target.value)}
-                                                onKeyDown={e => {
-                                                    if (e.key === 'Enter' && !e.shiftKey) {
-                                                        e.preventDefault();
-                                                        handleSendMessage(e);
-                                                    }
-                                                }}
-                                                placeholder="Ketik pesan"
-                                                className="w-full px-4 py-2 bg-transparent border-none focus:ring-0 text-[15px] resize-none max-h-32 text-[#111b21] placeholder-[#54656f] leading-6"
-                                                style={{ minHeight: '24px', maxHeight: '100px' }}
-                                            />
-                                        </div>
-
-                                        {inputText.trim() ? (
-                                            <button
-                                                type="submit"
-                                                className="p-2.5 bg-[#00a884] text-white rounded-full hover:bg-[#008f6f] transition-all shadow-sm mb-1"
-                                            >
-                                                <svg viewBox="0 0 24 24" height="24" width="24" preserveAspectRatio="xMidYMid meet" version="1.1" x="0px" y="0px" enableBackground="new 0 0 24 24"><path fill="currentColor" d="M1.101,21.757L23.8,12.028L1.101,2.3l0.011,7.912l13.623,1.816L1.112,13.845 L1.101,21.757z"></path></svg>
-                                            </button>
-                                        ) : (
-                                            // Real Voice Recorder Trigger
-                                            <button
-                                                type="button"
-                                                onClick={startRecording}
-                                                className="p-2.5 text-[#54656f] hover:bg-gray-200 rounded-full transition-all mb-1"
-                                                title="Tahan untuk merekam"
-                                            >
-                                                <Mic size={24} />
-                                            </button>
-                                        )}
-                                    </form>
-                                )}
+                        </>
+                    ) : (
+                        <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
+                            <div className="w-40 h-40 bg-gray-100 rounded-lg flex items-center justify-center mb-6 shadow-sm">
+                                <MessageSquare className="w-16 h-16 text-gray-300" />
+                            </div>
+                            <h3 className="text-xl md:text-2xl font-bold text-navy-900 mb-2">Selamat Datang di WhatsApp</h3>
+                            <p className="text-gray-500 max-w-sm leading-relaxed">
+                                Kirim dan terima pesan tanpa perlu menautkan telepon agar tetap online.
+                            </p>
+                            <div className="mt-8 flex gap-4 text-xs text-gray-400 font-medium tracking-wide uppercase">
+                                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500"></span> Online</span>
                             </div>
                         </div>
-
-                    </>
-                ) : (
-                    <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
-                        <div className="w-40 h-40 bg-gray-100 rounded-lg flex items-center justify-center mb-6 shadow-sm">
-                            <MessageSquare className="w-16 h-16 text-gray-300" />
-                        </div>
-                        <h3 className="text-xl md:text-2xl font-bold text-navy-900 mb-2">Selamat Datang di WhatsApp</h3>
-                        <p className="text-gray-500 max-w-sm leading-relaxed">
-                            Kirim dan terima pesan tanpa perlu menautkan telepon agar tetap online.
-                        </p>
-                        <div className="mt-8 flex gap-4 text-xs text-gray-400 font-medium tracking-wide uppercase">
-                            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500"></span> Online</span>
-                        </div>
-                    </div>
-                )}
+                    )
+                }
 
                 {/* Save Contact Modal */}
                 {
@@ -1770,8 +1962,8 @@ export default function LiveChat() {
                     customerId={getCustomerIdForChat(selectedChat)}
                     currentTags={getTagsForChat(selectedChat)}
                 />
-            </div>
-        </div>
+            </div >
+        </div >
     );
 };
 

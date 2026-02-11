@@ -1,25 +1,5 @@
 // frontend/src/pages/Settings.jsx - ✅ CONSISTENT DESIGN WITH BROADCASTS
-import { useState, useEffect } from 'react';
-import axios from 'axios';
-import toast from 'react-hot-toast';
-import { useTheme } from '../contexts/ThemeContext';
-import {
-  Save,
-  RotateCcw,
-  Smartphone,
-  Bell,
-  Eye,
-  MessageCircle,
-  Palette,
-  Clock,
-  Wifi,
-  WifiOff,
-  Loader2,
-  Check,
-  X,
-  RefreshCw,
-  Settings as SettingsIcon
-} from 'lucide-react';
+import ConfirmModal from '../components/ConfirmModal'; // Import Modal
 
 export default function Settings() {
   const { theme, setTheme } = useTheme();
@@ -30,6 +10,16 @@ export default function Settings() {
   const [resetting, setResetting] = useState(false);
   const [refreshingWA, setRefreshingWA] = useState(false);
 
+  // Modal State
+  const [confirmModal, setConfirmModal] = useState({
+    open: false,
+    title: '',
+    message: '',
+    confirmText: 'Confirm',
+    type: 'danger',
+    onConfirm: () => { }
+  });
+
   // Settings State
   const [settings, setSettings] = useState({
     readReceipts: true,
@@ -37,7 +27,7 @@ export default function Settings() {
     theme: 'light'
   });
 
-  // WhatsApp State
+  // ... (Existing WhatsApp State) ...
   const [whatsappStatus, setWhatsappStatus] = useState({
     connected: false,
     device: '',
@@ -45,13 +35,12 @@ export default function Settings() {
   });
   const [connectingWA, setConnectingWA] = useState(false);
 
-  // Load settings from backend
+  // ... (Existing useEffects) ...
   useEffect(() => {
     loadSettings();
     checkWhatsAppStatus();
   }, []);
 
-  // Auto-refresh WhatsApp status every 5 seconds
   useEffect(() => {
     const interval = setInterval(() => {
       checkWhatsAppStatus();
@@ -61,6 +50,7 @@ export default function Settings() {
   }, []);
 
   const loadSettings = async () => {
+    // ... (same implementation)
     try {
       setLoading(true);
       const response = await axios.get('/api/settings');
@@ -79,6 +69,7 @@ export default function Settings() {
   };
 
   const checkWhatsAppStatus = async () => {
+    // ... (same implementation)
     try {
       const response = await axios.get('/api/whatsapp/status');
       if (response.data.success) {
@@ -108,6 +99,7 @@ export default function Settings() {
   };
 
   const handleSave = async () => {
+    // ... (same implementation)
     try {
       setSaving(true);
 
@@ -125,14 +117,24 @@ export default function Settings() {
     }
   };
 
-  const handleReset = async () => {
-    if (!confirm('Reset settings to default?')) {
-      return;
-    }
+  // ✅ NEW HANDLER FOR RESET
+  const confirmReset = () => {
+    setConfirmModal({
+      open: true,
+      title: 'Reset Settings?',
+      message: 'This will restore all settings to their default values. This action cannot be undone.',
+      confirmText: 'Yes, Reset Defaults',
+      type: 'warning',
+      onConfirm: async () => {
+        setConfirmModal(prev => ({ ...prev, open: false }));
+        await executeReset();
+      }
+    });
+  };
 
+  const executeReset = async () => {
     try {
       setResetting(true);
-
       const response = await axios.post('/api/settings/reset');
 
       if (response.data.success) {
@@ -149,6 +151,7 @@ export default function Settings() {
   };
 
   const handleConnectWhatsApp = async () => {
+    // ... (same implementation)
     try {
       setConnectingWA(true);
       const response = await axios.post('/api/whatsapp/connect');
@@ -183,11 +186,22 @@ export default function Settings() {
     }
   };
 
-  const handleDisconnectWhatsApp = async () => {
-    if (!confirm('Disconnect WhatsApp? You will need to scan QR code again.')) {
-      return;
-    }
+  // ✅ NEW HANDLER FOR DISCONNECT
+  const confirmDisconnect = () => {
+    setConfirmModal({
+      open: true,
+      title: 'Disconnect WhatsApp?',
+      message: 'You will need to scan the QR code again to reconnect. Are you sure?',
+      confirmText: 'Yes, Disconnect',
+      type: 'danger',
+      onConfirm: async () => {
+        setConfirmModal(prev => ({ ...prev, open: false }));
+        await executeDisconnect();
+      }
+    });
+  };
 
+  const executeDisconnect = async () => {
     try {
       const response = await axios.post('/api/whatsapp/logout');
 
@@ -212,22 +226,22 @@ export default function Settings() {
       [key]: value
     }));
 
-    // Instant Theme Preview
     if (key === 'theme') {
       setTheme(value);
     }
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <Loader2 className="w-8 h-8 text-primary-500 animate-spin" />
-      </div>
-    );
-  }
-
   return (
     <div className="animate-slide-in">
+      <ConfirmModal
+        open={confirmModal.open}
+        onClose={() => setConfirmModal(prev => ({ ...prev, open: false }))}
+        onConfirm={confirmModal.onConfirm}
+        title={confirmModal.title}
+        message={confirmModal.message}
+        confirmText={confirmModal.confirmText}
+        type={confirmModal.type}
+      />
 
       {/* Page Header - CONSISTENT STYLE */}
       <div className="mb-8">
@@ -243,7 +257,7 @@ export default function Settings() {
 
           <div className="flex gap-3">
             <button
-              onClick={handleReset}
+              onClick={confirmReset} // ✅ UPDATED
               disabled={resetting}
               className="bg-gray-100 text-gray-700 px-5 py-2.5 rounded-xl font-semibold flex items-center gap-2 hover:bg-gray-200 transition-colors"
             >
@@ -364,7 +378,7 @@ export default function Settings() {
           <div className="flex gap-3">
             {whatsappStatus.connected ? (
               <button
-                onClick={handleDisconnectWhatsApp}
+                onClick={confirmDisconnect} // ✅ UPDATED
                 className="bg-red-500 text-white px-5 py-2.5 rounded-xl font-semibold flex items-center gap-2 hover:bg-red-600 transition-colors shadow-md"
               >
                 <WifiOff className="w-5 h-5" />

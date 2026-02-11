@@ -149,8 +149,8 @@ export default function Header() {
     switch (status) {
       case 'connected': return { dot: 'bg-green-500', text: 'Active', color: 'text-green-600' };
       case 'connecting': return { dot: 'bg-blue-500 animate-pulse', text: 'Connecting...', color: 'text-blue-600' };
-      case 'qrcode': return { dot: 'bg-yellow-500 animate-pulse', text: 'Scan QR', color: 'text-yellow-600' };
-      default: return { dot: 'bg-red-500', text: 'Disconnected', color: 'text-red-600' };
+      case 'qrcode': return { dot: 'bg-yellow-500 animate-pulse', text: 'Pairing Mode', color: 'text-yellow-600' };
+      default: return { dot: 'bg-red-500', text: 'Ready to Pair', color: 'text-red-600' };
     }
   };
 
@@ -171,7 +171,7 @@ export default function Header() {
         <div className="flex items-center gap-4">
 
           {/* System Monitor Widget */}
-          <SystemMonitor />
+          {/* <SystemMonitor /> */}
 
           {/* Status Indicator */}
           <div

@@ -5,8 +5,9 @@ import api from '../utils/axios'; // Corrected filename
 const avatarCache = new Map();
 
 const ChatAvatar = ({ chat, className = "w-12 h-12" }) => {
-    // If we have it in cache, use it immediately
-    const [url, setUrl] = useState(avatarCache.get(chat._id));
+    // If we have it in cache, use it immediately. 
+    // ✅ OPTIMIZATION: Use the URL from the chat object itself if available (Backend v2)
+    const [url, setUrl] = useState(avatarCache.get(chat._id) || chat.profilePictureUrl);
 
     // Fallback UI data
     const displayName = chat.displayName || 'Unknown';
@@ -17,6 +18,13 @@ const ChatAvatar = ({ chat, className = "w-12 h-12" }) => {
         const cached = avatarCache.get(chat._id);
         if (cached) {
             setUrl(cached);
+            return;
+        }
+
+        // ✅ NEW: Check if backend already gave us the URL
+        if (chat.profilePictureUrl) {
+            setUrl(chat.profilePictureUrl);
+            avatarCache.set(chat._id, chat.profilePictureUrl);
             return;
         }
 

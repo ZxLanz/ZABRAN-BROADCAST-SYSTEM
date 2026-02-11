@@ -5,7 +5,7 @@ import {
     MessageSquare, Users, Clock, TrendingUp, RefreshCw,
     LogOut, Zap, Shield, Globe, Cpu, Wifi, Battery, Eye
 } from 'lucide-react';
-import { QRCodeSVG } from 'qrcode.react';
+// import { QRCodeSVG } from 'qrcode.react'; // Unused
 import axios from '../utils/axios';
 import { toast } from 'react-hot-toast';
 
@@ -33,6 +33,8 @@ const mapDeviceInfo = (deviceInfo) => {
     };
 };
 
+import ConfirmModal from '../components/ConfirmModal'; // Import Modal
+
 export default function WhatsApp() {
     const [connectionState, setConnectionState] = useState({
         status: 'disconnected',
@@ -42,12 +44,48 @@ export default function WhatsApp() {
         deviceInfo: null,
     });
 
+    const [confirmModal, setConfirmModal] = useState({
+        open: false,
+        title: '',
+        message: '',
+        confirmText: 'Confirm',
+        type: 'danger',
+        onConfirm: () => { }
+    });
+
     const [autoReply, setAutoReply] = useState(false);
     const [autoRead, setAutoRead] = useState(false);
     const [readReceipts, setReadReceipts] = useState(true);
     const [loadingSettings, setLoadingSettings] = useState(true);
     const [isSavingSettings, setIsSavingSettings] = useState(false);
 
+    // ✅ PAIRING CODE STATE
+    const [phoneNumber, setPhoneNumber] = useState('');
+    const [pairingCode, setPairingCode] = useState(null);
+    const [isPairing, setIsPairing] = useState(false);
+
+    const handlePairing = async () => {
+        if (!phoneNumber) return toast.error('Enter phone number');
+        setIsPairing(true);
+        try {
+            const { data } = await axios.post('/whatsapp/request-pairing', { phoneNumber });
+            console.log('[PAIRING] Response:', data);
+
+            if (data.success) {
+                setPairingCode(data.code);
+                toast.success('Code received! Check your phone.');
+                // Auto-refresh stats/status more frequently while waiting
+                setTimeout(() => fetchStatus(false), 2000);
+            } else {
+                toast.error(data.error);
+            }
+        } catch (error) {
+            console.error('[PAIRING] Error:', error);
+            toast.error(error.response?.data?.error || 'Pairing failed');
+        } finally {
+            setIsPairing(false);
+        }
+    };
     const [stats, setStats] = useState({
         messagesToday: '0',
         messagesSent: '0',
@@ -61,7 +99,7 @@ export default function WhatsApp() {
     const intervalRef = useRef(null);
     const isMountedRef = useRef(true);
 
-    // Stats Configuration
+    // ... (Existing Arrays/Functions) ...
     const statsDisplay = [
         {
             label: 'Total Messages',
@@ -126,7 +164,6 @@ export default function WhatsApp() {
         try {
             const { data } = await axios.get(`/settings`);
             if (data.success && isMountedRef.current) {
-                // Fix: Use correct schema keys (autoReply, readReceipts)
                 setAutoReply(data.data.autoReply || false);
                 setAutoRead(data.data.autoRead || false);
                 setReadReceipts(data.data.readReceipts !== false);
@@ -148,7 +185,6 @@ export default function WhatsApp() {
             const { data } = await axios.put(`/settings`, { [key]: value });
             if (!data.success) throw new Error('Failed to save settings');
             toast.success('Settings updated');
-            // ✅ FORCE SYNC: Refresh settings to confirm DB state matches UI
             fetchSettings();
         } catch (error) {
             console.error('Error saving settings:', error);
@@ -167,12 +203,11 @@ export default function WhatsApp() {
 
             let newQrCode = null;
             if (statusData.status === 'qrcode') {
-                try {
-                    const { data: qrData } = await axios.get(`/whatsapp/qr`);
-                    if (qrData.success) newQrCode = qrData.qrCode;
-                } catch (qrError) {
-                    // QR might not be ready
-                }
+                // 🛑 FORCE STOP QR FETCH - PAIRING CODE ONLY
+                // try {
+                //     const { data: qrData } = await axios.get(`/whatsapp/qr`);
+                //     if (qrData.success) newQrCode = qrData.qrCode;
+                // } catch (qrError) { }
             }
 
             if (statusData.status === 'connected') {
@@ -210,32 +245,40 @@ export default function WhatsApp() {
             console.log('[DEBUG] Response received:', data);
             if (data.success) {
                 toast.success('Initializing connection...');
-                console.log('[DEBUG] Fetching status in 2 seconds');
                 setTimeout(() => fetchStatus(false), 2000);
             } else {
-                console.error('[DEBUG] Response success=false:', data);
                 toast.error(data.message || 'Connection failed');
                 setConnectionState(prev => ({ ...prev, loading: false }));
             }
         } catch (error) {
             console.error('[DEBUG] handleConnect error:', error);
-            console.error('[DEBUG] Error response:', error.response?.data);
-            console.error('[DEBUG] Error status:', error.response?.status);
             toast.error(error.response?.data?.message || 'Failed to start connection');
             setConnectionState(prev => ({ ...prev, loading: false }));
         }
     };
 
-    const handleDisconnect = async () => {
-        if (!window.confirm('Are you sure you want to disconnect?')) return;
+    // ✅ NEW DISCONNECT FLOW WITH MODAL
+    const confirmDisconnect = () => {
+        setConfirmModal({
+            open: true,
+            title: 'Disconnect Device?',
+            message: 'You will be logged out and need to scan the QR code again to reconnect. Are you sure?',
+            confirmText: 'Yes, Disconnect',
+            type: 'danger',
+            onConfirm: async () => {
+                setConfirmModal(prev => ({ ...prev, open: false }));
+                await executeDisconnect();
+            }
+        });
+    };
+
+    const executeDisconnect = async () => {
         setConnectionState(prev => ({ ...prev, loading: true }));
         try {
             await axios.post(`/whatsapp/logout`);
             toast.success('Disconnected successfully. Reconnecting...');
-            // Wait for disconnect to complete, then trigger new connection
             setTimeout(() => {
                 fetchStatus(true);
-                // Auto-reconnect to generate new QR
                 setTimeout(() => handleConnect(), 1500);
             }, 1000);
         } catch (error) {
@@ -250,7 +293,7 @@ export default function WhatsApp() {
         fetchStatus(true);
         fetchSettings();
 
-        const statusIntervalTime = connectionState.status === 'connected' ? 30000 : 2000; // Poll faster (2s) when connecting
+        const statusIntervalTime = connectionState.status === 'connected' ? 30000 : 2000;
         intervalRef.current = setInterval(() => fetchStatus(false), statusIntervalTime);
 
         return () => {
@@ -265,6 +308,16 @@ export default function WhatsApp() {
 
     return (
         <div className="p-8 max-w-7xl mx-auto space-y-8 animate-fade-in">
+            {/* ✅ CONFIRM MODAL */}
+            <ConfirmModal
+                open={confirmModal.open}
+                onClose={() => setConfirmModal(prev => ({ ...prev, open: false }))}
+                onConfirm={confirmModal.onConfirm}
+                title={confirmModal.title}
+                message={confirmModal.message}
+                confirmText={confirmModal.confirmText}
+                type={confirmModal.type}
+            />
 
             {/* Header */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -286,7 +339,7 @@ export default function WhatsApp() {
                     </button>
                     {connectionState.status !== 'disconnected' && (
                         <button
-                            onClick={handleDisconnect}
+                            onClick={confirmDisconnect} // ✅ UPDATED to Modal
                             className="px-4 py-2 bg-red-50 text-red-600 border border-red-100 rounded-lg hover:bg-red-100 font-medium flex items-center gap-2 transition-all shadow-sm"
                         >
                             <LogOut className="w-4 h-4" />
@@ -325,55 +378,54 @@ export default function WhatsApp() {
                                             <CheckCircle className="w-12 h-12 text-green-500 fill-green-500" strokeWidth={0} />
                                         </div>
                                     </div>
-                                ) : isQrCode && connectionState.qrCode ? (
-                                    <div className="bg-white p-4 rounded-3xl shadow-xl border border-gray-100 flex flex-col items-center gap-4 animate-in fade-in zoom-in duration-300 group">
-                                        <div className="relative">
-                                            <QRCodeSVG
-                                                value={connectionState.qrCode}
-                                                size={220}
-                                                level="H"
-                                                includeMargin={true}
-                                                className="group-hover:opacity-90 transition-opacity"
-                                            />
-                                            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                                                <div className="bg-white p-1.5 rounded-full shadow-lg border border-gray-50">
-                                                    <Smartphone className="w-8 h-8 text-green-500 fill-green-50" />
-                                                </div>
-                                            </div>
+                                ) : pairingCode ? (
+                                    <div className="bg-white p-6 rounded-3xl shadow-xl border border-gray-100 flex flex-col items-center gap-4 animate-in fade-in zoom-in duration-300">
+                                        <div className="bg-gray-50 px-6 py-4 rounded-xl border border-gray-200">
+                                            <span className="text-4xl font-mono font-black text-navy-900 tracking-widest">{pairingCode}</span>
                                         </div>
                                         <div className="flex items-center gap-2 text-xs font-bold text-gray-400 uppercase tracking-widest bg-gray-50 py-1.5 px-3 rounded-full">
-                                            <QrCode className="w-3 h-3" />
-                                            Scan with WhatsApp
+                                            <Smartphone className="w-3 h-3" />
+                                            Enter on WhatsApp
                                         </div>
+                                        <p className="text-xs text-center text-gray-500 max-w-[200px]">
+                                            Linked Devices {'>'} Link with phone number
+                                        </p>
                                     </div>
                                 ) : (
-                                    <div className="w-40 h-40 bg-gray-100 rounded-[2.5rem] flex items-center justify-center shadow-inner border-4 border-white">
-                                        <Smartphone className="w-20 h-20 text-gray-400" />
+                                    // 🟢 ALWAYS SHOW PAIRING INPUT IF NOT CONNECTED
+                                    <div className="w-full max-w-xs space-y-4">
+                                        <div className="text-center mb-2">
+                                            <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-sm border border-blue-100">
+                                                <Smartphone className="w-8 h-8" />
+                                            </div>
+                                            <h3 className="text-lg font-bold text-navy-900">Pairing Code</h3>
+                                            <p className="text-xs text-gray-500">Enter phone number to link device</p>
+                                        </div>
+
+                                        <input
+                                            type="tel"
+                                            placeholder="Example: 62812xxx"
+                                            value={phoneNumber}
+                                            onChange={(e) => setPhoneNumber(e.target.value)}
+                                            className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-center font-bold text-navy-900 focus:ring-2 focus:ring-navy-900 focus:border-transparent outline-none transition-all placeholder:font-normal placeholder:text-gray-400"
+                                        />
+                                        <button
+                                            onClick={handlePairing}
+                                            disabled={isPairing || !phoneNumber}
+                                            className="w-full py-3.5 px-6 bg-gradient-to-r from-navy-900 to-navy-700 text-white rounded-xl font-bold hover:shadow-xl hover:scale-[1.02] transition-all shadow-lg shadow-navy-900/20 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                                        >
+                                            {isPairing ? <RefreshCw className="w-5 h-5 animate-spin" /> : <QrCode className="w-5 h-5" />}
+                                            {isPairing ? 'Generating...' : 'Get Code'}
+                                        </button>
                                     </div>
                                 )}
                             </div>
 
                             {/* Status Text (Tighter Spacing) */}
-                            <h2 className="text-2xl font-black text-navy-900 mb-1">
-                                {isConnected ? '🟢 Device Connected' : isQrCode ? '📱 Scan QR Code' : '⚪ Device Disconnected'}
-                            </h2>
-                            <p className="text-sm text-gray-600 mb-4 max-w-[280px] leading-relaxed">
-                                {isConnected ? `Successfully connected to ${deviceInfo?.name || 'WhatsApp'}` :
-                                    isQrCode ? 'Open WhatsApp on your phone and scan this code to link your device.' :
-                                        'Click the button below to generate a QR code and connect your WhatsApp.'}
-                            </p>
+                            {/* <h2 className="text-2xl font-black text-navy-900 mb-1">
+                                {isConnected ? '🟢 Device Connected' : pairingCode ? '🔢 Pairing Code' : '⚪ Connect Device'}
+                            </h2> */}
 
-                            {/* Action Button */}
-                            {!isConnected && !isQrCode && (
-                                <button
-                                    onClick={handleConnect}
-                                    disabled={connectionState.loading}
-                                    className="w-full py-4 px-6 bg-gradient-to-r from-navy-900 to-navy-700 text-white rounded-xl font-bold hover:shadow-2xl hover:scale-105 transition-all shadow-lg shadow-navy-900/30 flex items-center justify-center gap-2"
-                                >
-                                    <QrCode className="w-5 h-5" />
-                                    {connectionState.loading ? 'Initializing...' : 'Start Connection'}
-                                </button>
-                            )}
 
                         </div>
 

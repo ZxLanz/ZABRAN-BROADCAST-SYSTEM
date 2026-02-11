@@ -5,9 +5,10 @@ const {
     useMultiFileAuthState,
     DisconnectReason,
     fetchLatestBaileysVersion,
-    makeInMemoryStore,
     proto
 } = require('@whiskeysockets/baileys');
+// ✅ SAFE IMPORT: Use Custom Store for v7 compatibility
+const makeInMemoryStore = require('./makeInMemoryStore');
 const pino = require('pino');
 const fs = require('fs');
 const path = require('path');
@@ -19,6 +20,7 @@ const { downloadMediaMessage, downloadContentFromMessage } = require('@whiskeyso
 const Setting = require('../models/Setting');
 const aiService = require('../services/aiService');
 const { transcribeAudio } = require('../services/transcriptionService');
+const { getIO } = require('../services/socket');
 
 // ===========================================
 // MULTI-USER STORAGE MAPS
@@ -325,47 +327,80 @@ async function autoConnectAllUsers() {
 // ✅ WHATSAPP CONNECTION (MANUAL) - FIXED
 // ===========================================
 
+// ===========================================
+// ✅ WHATSAPP CONNECTION (STRICT STATE MACHINE)
+// ===========================================
+
+const MAX_RETRIES = 5;
+const retryCounters = new Map();
+
+// ✅ HELPER: Centralized Reconnect Scheduler (Prevents Ghost Timers)
+function scheduleReconnect(userId, delay) {
+    // 1. Always purge existing timer first
+    if (reconnectTimeouts.has(userId)) {
+        clearTimeout(reconnectTimeouts.get(userId));
+        reconnectTimeouts.delete(userId);
+    }
+
+    // 2. Schedule new one
+    console.log(`⏳ [RECONNECT] Scheduling reconnect for user ${userId} in ${delay}ms...`);
+    const timeout = setTimeout(() => {
+        connectToWhatsApp(userId);
+    }, delay);
+
+    // 3. Track it
+    reconnectTimeouts.set(userId, timeout);
+}
+
 async function connectToWhatsApp(userId) {
     if (!userId || userId === 'undefined') {
         console.error('❌ [CONNECT] Cannot connect: userId is invalid', userId);
         return;
     }
 
-    // ✅ FORCE CLEANUP (Stop "Stream Errored" Loop)
+    // 🔒 LOCK: Prevent Double Connection Attempts
     if (connectionCooldowns.has(userId)) {
-        console.warn(`⏳ [CONNECT] Handshake in progress for ${userId}. Skipping duplicate.`);
+        console.warn(`⏳ [CONNECT] Connection attempt in progress for ${userId}. Skipping duplicate.`);
         return;
     }
-    connectionCooldowns.set(userId, true);
-    setTimeout(() => connectionCooldowns.delete(userId), 5000); // 5s Cooldown
 
+    // ✅ NEW: Pairing Code Logic - If we are requesting pairing, we MUST allow the process
+    // We handle the lock carefully.
+
+    connectionCooldowns.set(userId, true);
+    // Auto-release lock after 20s (Extended for pairing)
+    setTimeout(() => connectionCooldowns.delete(userId), 20000);
+
+    // ♻️ CLEANUP: Force close existing socket
     if (socketsMap.has(userId)) {
-        console.log(`♻️ [CONNECT] Closing Zombie Socket for ${userId}`);
-        try { socketsMap.get(userId).end(undefined); } catch (e) { }
+        console.log(`♻️ [CONNECT] Force closing existing socket for ${userId} to prevent 440 Conflict`);
+        const oldSock = socketsMap.get(userId);
+        try {
+            oldSock.end(undefined);
+            oldSock.ws.close();
+            oldSock.ev.removeAllListeners();
+        } catch (e) { }
         socketsMap.delete(userId);
     }
 
     console.log(`\n🔌 [CONNECT] Starting WhatsApp connection for user: ${userId}`);
-
-
     loadStats(userId);
 
     const userAuthPath = path.join(BASE_AUTH_PATH, `user-${userId}`);
-
     if (!fs.existsSync(userAuthPath)) {
         fs.mkdirSync(userAuthPath, { recursive: true });
     }
 
     try {
-        // ✅ Load user settings for read receipts
         const settings = await getUserSettings(userId);
-        console.log(`⚙️ [CONNECT] Settings loaded - Read Receipts: ${settings.readReceiptsEnabled}`);
-
         const { state, saveCreds } = await useMultiFileAuthState(userAuthPath);
         const { version } = await fetchLatestBaileysVersion();
 
-        // ✅ INITIALIZE STORE
-        const store = makeInMemoryStore({ logger: pino({ level: 'silent' }) });
+        // ✅ INITIALIZE STORE (Optimized)
+        const store = makeInMemoryStore({
+            logger: pino({ level: 'info' }), // DEBUG: set to info/debug to see sync
+            maximumHistory: 200
+        });
         const storePath = path.join(userAuthPath, 'baileys_store_multi.json');
 
         try {
@@ -373,44 +408,27 @@ async function connectToWhatsApp(userId) {
                 store.readFromFile(storePath);
                 console.log(`✅ [STORE] Loaded existing store for user ${userId}`);
             }
-        } catch (err) {
-            console.error(`⚠️ [STORE] Corrupt store file detected for user ${userId}. Recreating...`);
-            try {
-                fs.unlinkSync(storePath);
-            } catch (delErr) { }
-        }
+        } catch (err) { }
 
-        // Save store periodically (CLEANUP FIRST)
-        if (storeIntervals.has(userId)) {
-            clearInterval(storeIntervals.get(userId));
-        }
-
-        const intervalId = setInterval(() => {
+        // Save store periodically
+        if (storeIntervals.has(userId)) clearInterval(storeIntervals.get(userId));
+        storeIntervals.set(userId, setInterval(() => {
             try {
-                // Ensure directory exists before writing (Fixes ENOENT crash after reset)
-                if (!fs.existsSync(userAuthPath)) {
-                    fs.mkdirSync(userAuthPath, { recursive: true });
-                }
+                if (!fs.existsSync(userAuthPath)) fs.mkdirSync(userAuthPath, { recursive: true });
                 store.writeToFile(storePath);
-            } catch (err) {
-                console.error(`⚠️ [STORE] Save failed for user ${userId}:`, err.message);
-            }
-        }, 10_000);
-        storeIntervals.set(userId, intervalId);
+            } catch (err) { }
+        }, 10_000));
 
         const sock = makeWASocket({
             version,
             logger: pino({ level: 'silent' }),
-            printQRInTerminal: true,
+            printQRInTerminal: false, // 🚫 PAIRING CODE: No QR in terminal
             auth: state,
-            // ✅ CUSTOM BROWSER NAME
-            browser: ['Zabran System', 'Chrome', 'Windows 10'],
-
-            // ✅ READ RECEIPTS CONFIG - FIXED FIELD NAME
-            syncFullHistory: settings.readReceiptsEnabled !== false,
-            markOnlineOnConnect: settings.readReceiptsEnabled !== false,
-
-            // ✅ ENABLE STORE
+            // browser: ['Zabran System', 'Chrome', 'Windows 10'], // 🛑 Might cause "Failed to link"
+            browser: ['Ubuntu', 'Chrome', '20.0.04'], // ✅ Standard Linux Signature (Most stable)
+            syncFullHistory: true,
+            markOnlineOnConnect: true,
+            generateHighQualityLinkPreview: true,
             getMessage: async key => {
                 if (store) {
                     const msg = await store.loadMessage(key.remoteJid, key.id);
@@ -419,192 +437,227 @@ async function connectToWhatsApp(userId) {
                 return proto.WebMessageInfo.fromObject({});
             },
             shouldIgnoreJid: (jid) => jid.includes('broadcast') || jid.endsWith('@g.us'),
+            connectTimeoutMs: 60000,
+            defaultQueryTimeoutMs: 60000
         });
 
-        // ✅ BIND STORE (SAFE BIND)
-        try {
-            store.bind(sock.ev);
-            storesMap.set(userId, store);
-            console.log(`✅ [STORE] Store bound for user ${userId}`);
-        } catch (bindErr) {
-            console.error(`❌ [STORE] Failed to bind:`, bindErr);
-        }
-
-        console.log(`📡 [CONNECT] Socket created for user ${userId}. Waiting for connection update...`);
-
-
+        // ✅ BIND STORE
+        store.bind(sock.ev);
+        storesMap.set(userId, store);
         socketsMap.set(userId, sock);
         statusMap.set(userId, 'connecting');
 
+        // ✅ EVENTS
         sock.ev.on('creds.update', saveCreds);
 
+
+        // ✅ HISTORY SYNC HANDLER (Prevention of "PE" & Truncation)
+        sock.ev.on('messaging-history.set', async ({ chats, contacts, messages, isLatest }) => {
+            console.log(`📥 [SYNC] History received: ${messages.length} msgs, ${chats.length} chats, ${contacts.length} contacts`);
+
+            // Process initial messages to populate DB
+            for (const msg of messages) {
+                // Ensure message object is valid
+                if (msg.message) {
+                    await processIncomingMessage(msg, true);
+                }
+            }
+        });
+
         sock.ev.on('connection.update', async (update) => {
+            console.log(`🔌 [CONNECTION DEBUG] Update received:`, JSON.stringify(update, null, 2));
             const { connection, lastDisconnect, qr } = update;
 
             if (qr) {
                 qrCodesMap.set(userId, qr);
                 statusMap.set(userId, 'qrcode');
-                console.log(`📸 [QR] QR Code generated for user ${userId}. Scan now!`);
+                // console.log(`📸 [QR] QR Code generated for user ${userId}`); // 🔇 SILENCED for Pairing Code Mode
+                // Unlock immediately for QR scan
+                connectionCooldowns.delete(userId);
             }
-
-            if (connection) {
-                console.log(`🔄 [UPDATE] Connection update for user ${userId}: ${connection}`);
-            }
-
 
             if (connection === 'close') {
-                const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+                // Remove lock to allow reconnect logic to proceed
+                connectionCooldowns.delete(userId);
 
-                console.log(`🔴 [CLOSE] Connection closed for user ${userId}. Reason:`, lastDisconnect?.error?.message, '| Reconnecting:', shouldReconnect);
+                const statusCode = lastDisconnect?.error?.output?.statusCode;
+                const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
 
-                if (!shouldReconnect) {
-                    console.log(`👋 [LOGOUT] Session logged out for user ${userId}. Cleaning up...`);
+                console.log(`🔴 [CLOSE] Connection closed for user ${userId}. Code: ${statusCode} | Reconnecting: ${shouldReconnect}`);
 
-                    socketsMap.delete(userId);
-                    qrCodesMap.delete(userId);
-                    statusMap.set(userId, 'disconnected');
-
-                    try {
-                        fs.rmSync(userAuthPath, { recursive: true, force: true });
-                        console.log(`✅ [CLEANUP] Auth files deleted for user ${userId}`);
-                    } catch (err) {
-                        console.error(`⚠️ [CLEANUP] Error deleting auth files for user ${userId}:`, err.message);
-                    }
-
-                    console.log(`🔄 [RESTART] Restarting client for user ${userId} to generate new QR...`);
-                    setTimeout(() => {
-                        connectToWhatsApp(userId);
-                    }, 2000);
+                // 🛑 SPECIAL HANDLING FOR 440 (CONFLICT)
+                if (statusCode === 440 || statusCode === '440') {
+                    console.error(`⚠️ [CONFLICT] Detection of 440 Conflict. Waiting 30s before retry to clear zombies...`);
+                    try { sock.end(undefined); } catch (e) { } // Ensure strict close (Safe Wrap)
+                    scheduleReconnect(userId, 30000); // 30s wait
                     return;
                 }
 
-                statusMap.set(userId, 'reconnecting');
-                const existingTimeout = reconnectTimeouts.get(userId);
-                if (existingTimeout) clearTimeout(existingTimeout);
-
-                const timeout = setTimeout(() => {
-                    connectToWhatsApp(userId);
-                }, 5000);
-                reconnectTimeouts.set(userId, timeout);
+                if (!shouldReconnect) {
+                    console.log(`👋 [LOGOUT] Session logged out for user ${userId}`);
+                    socketsMap.delete(userId);
+                    qrCodesMap.delete(userId);
+                    statusMap.set(userId, 'disconnected');
+                    try {
+                        fs.rmSync(userAuthPath, { recursive: true, force: true });
+                    } catch (e) { }
+                } else {
+                    // Standard Reconnect
+                    const delay = statusCode === 428 ? 10000 : 3000; // Longer delay for "Connection Closed" (428)
+                    scheduleReconnect(userId, delay);
+                }
 
             } else if (connection === 'open') {
                 statusMap.set(userId, 'connected');
                 qrCodesMap.delete(userId);
+                retryCounters.set(userId, 0); // Reset retry count
+                connectionCooldowns.delete(userId); // Release lock
 
-                const userName = sock.user?.name || sock.user?.notify || sock.user?.id?.split(':')[0] || 'Unknown';
-                const userNumber = sock.user?.id?.split(':')[0] || 'Unknown';
-                console.log(`✅ [CONNECTED] User ${userId} connected as ${userName} (${userNumber})`);
+                // ✅ CRITICAL FIX: Cancel any pending reconnects strictly
+                if (reconnectTimeouts.has(userId)) {
+                    console.log(`✅ [CONNECT] Cancelling pending reconnect since we are now OPEN.`);
+                    clearTimeout(reconnectTimeouts.get(userId));
+                    reconnectTimeouts.delete(userId);
+                }
 
+                const userNumber = sock.user?.id?.split(':')[0];
+                console.log(`✅ [CONNECTED] User ${userId} connected as ${userNumber}`);
+
+                // Update DB Status
+                const User = require('../models/User');
                 try {
-                    const User = require('../models/User');
                     await User.findByIdAndUpdate(userId, {
                         whatsappStatus: 'connected',
                         lastWhatsAppConnection: new Date(),
                         whatsappError: null
                     });
-                } catch (dbErr) { }
+                } catch (e) { }
             }
-
         });
 
-        // ✅ PRESENCE UPDATE (Typing / Online Status)
         sock.ev.on('presence.update', async (data) => {
             const { id, presences } = data;
-            // id is the JID of the chat where presence is updated
-            // presences is a map of participant JID -> presence data
-
-            // console.log(`👤 [PRESENCE] Update from ${id}:`, JSON.stringify(presences));
-
-            // We need to parse this for the frontend
-            // If it's a private chat, 'id' is the user's JID.
-            // If it's a group, 'id' is the group JID, and presences has keys for participants.
-
-            // Simplify: Emit to frontend via Socket.IO
             const { getIO } = require('../services/socket');
             const io = getIO();
             if (io) {
-                io.to(userId).emit('presence_update', {
-                    chatJid: id,
-                    presences: presences
-                });
+                io.to(userId).emit('presence_update', { chatJid: id, presences: presences });
             }
         });
 
         // ... inside connectToWhatsApp ...
 
         // ✅ SHARED MESSAGE PROCESSING FUNCTION (For Upsert & History)
+        // ✅ HELPER: Prune Old Messages to Maintain Limit
+        const pruneChat = async (targetJid) => {
+            const LIMIT = 20;
+            try {
+                const ChatMessage = require('../models/ChatMessage');
+                const count = await ChatMessage.countDocuments({ userId, remoteJid: targetJid });
+                if (count > LIMIT) {
+                    const toDelete = count - LIMIT;
+                    const oldest = await ChatMessage.find({ userId, remoteJid: targetJid })
+                        .sort({ timestamp: 1 })
+                        .limit(toDelete)
+                        .select('_id');
+
+                    if (oldest.length > 0) {
+                        await ChatMessage.deleteMany({ _id: { $in: oldest.map(m => m._id) } });
+                    }
+                }
+            } catch (e) {
+                console.error('Prune error:', e);
+            }
+        };
+
         // ✅ SHARED MESSAGE PROCESSING FUNCTION (For Upsert & History)
         const processIncomingMessage = async (msg, isHistory = false) => {
-            // console.log(`📨 [PROCESS] Msg: ${msg.key.id}`);
-            if (!msg.message) return; // Skip system messages
+            if (!msg.message) return null;
+
+            // 🛑 1. IGNORE PROTOCOL MESSAGES (System Syncs)
+            const type = Object.keys(msg.message)[0];
+            if (type === 'protocolMessage' || type === 'senderKeyDistributionMessage') return null;
 
             const isFromMe = msg.key.fromMe;
             let remoteJid = msg.key.remoteJid;
+            const sessionUserId = sock.user.id; // Renamed to avoid shadowing outer 'userId' (Mongo ID)
 
-            // 🚨 LID NORMALIZATION: Convert @lid to @s.whatsapp.net BEFORE saving
+            // 🔄 2. NORMALIZE LID TO PHONE JID (CRITICAL FOR SAINT ZILAN)
             if (remoteJid.includes('@lid')) {
-                // console.log(`🔍 [LID DETECT] Found LID: ${remoteJid}`);
-
-                // Try to resolve LID to phone number (Store + DB)
-                const store = storesMap.get(userId);
-                let resolvedPhone = null;
-
-                // 1. Check Store (Fastest)
-                if (store && store.contacts) {
-                    for (const [jid, contact] of Object.entries(store.contacts)) {
-                        if (jid === remoteJid || contact.lid === remoteJid) {
-                            if (jid.includes('@s.whatsapp.net')) {
-                                resolvedPhone = jid.split('@')[0];
-                                // console.log(`✅ [NORMALIZE] Resolved via store: ${remoteJid} -> ${jid}`);
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                // 2. Check DB (Robust Fallback)
-                if (!resolvedPhone) {
-                    try {
-                        const Customer = require('../models/Customer');
-                        const dbCustomer = await Customer.findOne({ jids: remoteJid });
-                        if (dbCustomer && dbCustomer.phone) {
-                            resolvedPhone = dbCustomer.phone.replace(/\D/g, '');
-                            if (resolvedPhone.startsWith('0')) resolvedPhone = '62' + resolvedPhone.substring(1);
-                            if (resolvedPhone.startsWith('8')) resolvedPhone = '62' + resolvedPhone;
-                            // console.log(`✅ [NORMALIZE-DB] Resolved LID via DB: ${remoteJid} -> ${resolvedPhone}`);
-                        }
-                    } catch (e) { console.error('LID DB Error:', e); }
-                }
-
-                // If resolved, use phone number JID instead
+                const resolvedPhone = await resolvePhoneFromLid(sessionUserId, remoteJid);
                 if (resolvedPhone) {
-                    remoteJid = resolvedPhone + '@s.whatsapp.net';
-                    // console.log(`✅ [NORMALIZE] Converted LID to Phone: ${msg.key.remoteJid} -> ${remoteJid}`);
+                    remoteJid = `${resolvedPhone}@s.whatsapp.net`;
                 }
             }
 
-            // Update Stats (Existing)
+            // 🛑 3. REMOVED STRICT SELF-CHAT DETECTION
+            // We want to allow saving 'Note to Self' (chatting with own number)
+            // The AI prevention should happen LATER, not here during data saving.
+            /*
+            const myNumber = sessionUserId.split(':')[0].split('@')[0];
+            const senderNumber = remoteJid.split('@')[0].split(':')[0];
+
+            if (myNumber === senderNumber) {
+                return null;
+            }
+            */
+
+            console.log(`📨 [PROCESS DEBUG] Processing msg from ${remoteJid}. FromMe: ${isFromMe}, Type: ${type}`);
+
+            // ✅ SYNC FIX: Allow 'fromMe' (Sync) messages.
+            // We do NOT return null here for isFromMe anymore.
+
+            // 🌟 STRICT UNIFIED JID STRATEGY 🌟
+            // User Request: "Gunakan satu ID yaitu JID"
+            // Goal: All LIDs must be converted to Phone JIDs immediately.
+
+            const { jidNormalizedUser } = require('@whiskeysockets/baileys');
+
+            // 1. Force Resolve LID -> Phone JID
+            if (remoteJid.includes('@lid')) {
+                const resolved = await resolvePhoneFromLid(sessionUserId, remoteJid);
+                if (resolved) {
+                    // console.log(`🔄 [NORMALIZE] Converted LID ${remoteJid} -> ${resolved}@s.whatsapp.net`);
+                    remoteJid = `${resolved}@s.whatsapp.net`;
+                }
+            }
+
+            // 2. Standard Normalize (removes device specifics like :11)
+            try {
+                remoteJid = jidNormalizedUser(remoteJid);
+            } catch (e) { }
+
+            // 3. Final Safety: IF still LID, and we have a phone extracted, FORCE IT.
+            if (remoteJid.includes('@lid')) {
+                // Last ditch effort: Check if we can find a phone in the message context
+                if (msg.key.remoteJid && msg.key.remoteJid.includes('@s.whatsapp.net')) {
+                    remoteJid = jidNormalizedUser(msg.key.remoteJid);
+                }
+            }
+
+            // 2. Normalize Participant (Sender)
+            let participant = msg.key.participant || msg.key.remoteJid;
+            if (participant) {
+                participant = jidNormalizedUser(participant);
+            }
+
+            // Update Stats
             if (!isFromMe) {
                 updateChatActivity(userId, remoteJid, 'received', msg.messageTimestamp);
             } else {
                 updateChatActivity(userId, remoteJid, 'sent', msg.messageTimestamp);
             }
 
-            // ✅ NEW: Save Chat to Database
+            // ... (Duplication Check) ...
             const ChatMessage = require('../models/ChatMessage');
-            const { getIO } = require('../services/socket');
-
-            // 🛡️ DUPLICATION CHECK
             const existingMsg = await ChatMessage.findOne({ msgId: msg.key.id });
 
             if (existingMsg) {
-                // console.log(`♻️ [UPSERT] Skipping duplicate message: ${msg.key.id}`);
-                return;
+                return remoteJid;
             }
 
-            // HANDLE REACTION MESSAGE
             const messageType = Object.keys(msg.message)[0];
 
+            // HANDLE REACTION MESSAGE
             if (messageType === 'reactionMessage') {
                 const reaction = msg.message.reactionMessage;
                 const targetId = reaction.key.id;
@@ -643,9 +696,34 @@ async function connectToWhatsApp(userId) {
             let mediaPath = null;
             let mediaUrl = null;
 
-            // HANDLE REVOKE
+            // HANDLE REVOKE (Delete Message)
             if (messageType === 'protocolMessage' && msg.message.protocolMessage?.type === 0) {
-                return; // Ignore deletion
+                const key = msg.message.protocolMessage.key;
+                // console.log(`🗑️ [REVOKE] Message revoked: ${key.id}`);
+
+                const ChatMessage = require('../models/ChatMessage');
+                const { getIO } = require('../services/socket');
+
+                // Update DB to mark as revoked
+                await ChatMessage.updateOne(
+                    { msgId: key.id },
+                    {
+                        content: '🚫 Pesan ini telah dihapus',
+                        status: 'revoked',
+                        mediaUrl: null,
+                        mediaPath: null
+                    }
+                );
+
+                // Notify Frontend
+                const io = getIO();
+                if (io) {
+                    io.to(`user_${userId}`).emit('message_revoke', {
+                        msgId: key.id,
+                        remoteJid: key.remoteJid
+                    });
+                }
+                return;
             }
 
             // MEDIA DOWNLOAD HELPER
@@ -705,14 +783,11 @@ async function connectToWhatsApp(userId) {
 
             if (['imageMessage', 'videoMessage', 'audioMessage', 'documentMessage', 'stickerMessage'].includes(messageType)) {
 
-                // 🛑 OPTIMIZATION: SKIP MEDIA DOWNLOAD FOR HISTORY SYNC
-                if (!isHistory) {
-                    // Only download media if recent (< 30 days) for new messages
-                    // (Double safety, though upsert is usually new)
-                    mediaInfo = await saveMedia(msg);
-                } else {
-                    // console.log('⏭️ [HISTORY] Skipping media download');
-                }
+                // 🛑 POLICY CHANGE: NEVER AUTO-DOWNLOAD (On-Demand Only)
+                // This saves massive storage. User must click "Download" in UI.
+                // mediaInfo = await saveMedia(msg); 
+
+                // We leave mediaInfo null. The frontend will see null mediaUrl and show "Download" button.
 
                 if (messageType === 'imageMessage') content = msg.message.imageMessage.caption || '[Image]';
                 else if (messageType === 'videoMessage') content = msg.message.videoMessage.caption || '[Video]';
@@ -722,9 +797,21 @@ async function connectToWhatsApp(userId) {
             else if (messageType === 'conversation') {
                 content = msg.message.conversation;
             } else if (messageType === 'extendedTextMessage') {
-                content = msg.message.extendedTextMessage.text;
+                // ✅ TRUNCATION FIX: Prioritize 'text' but check contextInfo if needed
+                content = msg.message.extendedTextMessage.text || msg.message.extendedTextMessage.caption || '';
+
+                // If content is suspiciously short or empty, check quoting
+                if (!content && msg.message.extendedTextMessage.contextInfo) {
+                    content = msg.message.extendedTextMessage.contextInfo.quotedMessage?.conversation || '';
+                }
             } else {
+                // Fallback for detailed types
                 content = `[${messageType}]`;
+            }
+
+            // 🛡️ FINAL SAFETY: Ensure content is a string
+            if (typeof content !== 'string') {
+                content = String(content || '');
             }
 
             // QUOTED MESSAGE
@@ -778,12 +865,42 @@ async function connectToWhatsApp(userId) {
 
             if (msgDate < cutoffDate) return;
 
-            // Extract phone number 
+            // 🚀 IMPROVED PHONE EXTRACTION (LID & Phone Support)
             let extractedPhone = null;
+
+            // 1. Try simple extraction from @s.whatsapp.net
             if (remoteJid.includes('@s.whatsapp.net')) {
                 const before = remoteJid.split('@')[0].split(':')[0];
                 extractedPhone = before.replace(/\D/g, '');
-                if (extractedPhone.startsWith('0')) extractedPhone = '62' + extractedPhone.substring(1);
+            }
+            // 2. Try simple extraction from broadcast @g.us (Group)
+            else if (remoteJid.includes('@g.us')) {
+                // For groups, we don't extract phone from the group JID itself usually
+            }
+            // 3. Try resolving LID Key to Phone via Store
+            else if (remoteJid.includes('@lid')) {
+                try {
+                    const store = storesMap.get(userId);
+                    if (store && store.contacts) {
+                        const contact = store.contacts.get(remoteJid);
+                        if (contact) {
+                            // Try to find a linked standard JID
+                            // This is tricky in Baileys store structure, usually we iterate or check mapped props
+                            // But let's try a reverse lookup in our memory map if we built one?
+                            // No, we'll try to guess or use the 'notify' name to find a match? No that's risky.
+
+                            // Better: Check if we have a phone number in the Contact Object (some versions have it)
+                            if (contact.id && contact.id.includes('@s.whatsapp.net')) {
+                                extractedPhone = contact.id.split('@')[0].replace(/\D/g, '');
+                            }
+                        }
+                    }
+                } catch (e) { }
+            }
+
+            // Normalize format (628xxx)
+            if (extractedPhone && extractedPhone.startsWith('0')) {
+                extractedPhone = '62' + extractedPhone.substring(1);
             }
 
             // 🤖 AUTO READ CHECK (Determine Status BEFORE Saving)
@@ -794,40 +911,105 @@ async function connectToWhatsApp(userId) {
                 if (userSettings?.autoRead && !isFromMe) {
                     await sock.readMessages([msg.key]);
                     initialStatus = 'read';
-                    // console.log(`👀 [AUTO-READ] Marked message from ${extractedPhone} as read`);
                 }
             } catch (e) { }
 
             try {
-                const newChat = await ChatMessage.create({
-                    userId: userId,
-                    remoteJid: remoteJid,
-                    fromMe: isFromMe,
-                    msgId: msg.key.id,
-                    messageType: messageType.replace('Message', ''),
-                    content: content,
-                    timestamp: new Date(msg.messageTimestamp * 1000),
-                    pushName: msg.pushName || 'Unknown',
-                    extractedPhone: extractedPhone,
-                    status: initialStatus, // ✅ Save as 'read' immediately
-                    mediaUrl: mediaInfo?.url,
-                    mediaPath: mediaInfo?.path,
-                    mediaType: mediaInfo?.type,
-                    quotedMsg: quotedMsgData
-                });
-
-                // Emit to frontend (Realtime only if recent)
+                let newChat;
                 try {
+                    newChat = await ChatMessage.create({
+                        userId: userId,
+                        remoteJid: remoteJid,
+                        fromMe: isFromMe,
+                        msgId: msg.key.id,
+                        messageType: messageType.replace('Message', ''),
+                        content: content,
+                        timestamp: new Date(msg.messageTimestamp * 1000),
+                        pushName: msg.pushName || 'Unknown',
+                        extractedPhone: extractedPhone,
+                        status: initialStatus,
+                        mediaUrl: mediaInfo?.url,
+                        mediaPath: mediaInfo?.path,
+                        mediaType: mediaInfo?.type,
+                        quotedMsg: quotedMsgData
+                    });
+                } catch (dbErr) {
+                    if (dbErr.code === 11000) {
+                        // console.log(`⏩ [DUPLICATE] Skipped existing msg: ${msg.key.id}`);
+                        return remoteJid; // Already exists, just return
+                    }
+                    throw dbErr; // Rethrow other errors
+                }
+
+                // Emit to frontend (Realtime)
+                try {
+                    // 🚀 NORMALIZED JID FOR FRONTEND MATCHING
+                    // This creates a "Bridge" so the frontend receives the message 
+                    // even if it's listening to the Phone Number but the event is LID.
+                    let frontendJid = remoteJid;
+                    if (extractedPhone) {
+                        frontendJid = extractedPhone + '@s.whatsapp.net';
+                    }
+
                     const io = getIO();
-                    io.emit('new_message', { userId, message: newChat });
-                } catch (err) { }
+
+                    // ✅ DEBUG: Log before emit
+                    const roomName = `user_${userId}`; // ✅ FIX: Add user_ prefix to match frontend
+                    console.log(`🚀 [EMIT] Attempting to emit new_message to room: ${roomName}`);
+                    console.log(`🚀 [EMIT] Message ID: ${newChat.msgId}, RemoteJid: ${frontendJid}`);
+
+                    // ✅ EMIT TO SPECIFIC USER ROOM (not global broadcast)
+                    io.to(roomName).emit('new_message', {
+                        userId,
+                        message: {
+                            ...newChat.toObject(),
+                            // Override remoteJid with canonical one for frontend matching
+                            remoteJid: frontendJid,
+                            originalJid: remoteJid // Keep original just in case
+                        }
+                    });
+
+                    // 🔴 DEBUG: ALSO EMIT GLOBALLY TO TEST IF SOCKET.IO WORKS AT ALL
+                    io.emit('test_global_broadcast', {
+                        test: 'If you see this, Socket.IO works but room targeting is broken',
+                        roomName,
+                        userId,
+                        timestamp: new Date().toISOString()
+                    });
+
+                    console.log(`✅ [EMIT] Successfully emitted new_message to room: ${roomName}`);
+                    console.log(`🔴 [EMIT] Also sent test_global_broadcast to ALL clients`);
+                } catch (err) {
+                    console.error('❌ [EMIT] Failed to emit new_message:', err.message);
+                    console.error('❌ [EMIT] Stack:', err.stack);
+                }
 
                 // 🤖 AI AUTO REPLY LOGIC (Only for NEW messages, check timestamp)
                 // Skip AI for history sync messages (older than 10 seconds)
                 const isRecent = (new Date() - msgDate) < 20 * 1000;
 
-                if (isRecent && !isFromMe && content && !remoteJid.includes('@g.us')) {
-                    // console.log(`[AI] Checking... Content: ${content.substring(0, 20)}`);
+                // 🛑 IGNORE SYSTEM MESSAGES
+                if (messageType === 'protocolMessage') return;
+
+                // 🛑 IGNORE SELF CHAT (User chatting with themselves)
+                // userId usually looks like "6282126633112:5@s.whatsapp.net"
+                // remoteJid for self chat looks like "6282126633112@s.whatsapp.net"
+                const myNumber = userId.split(':')[0].split('@')[0];
+                const senderNumber = remoteJid.split('@')[0].split(':')[0];
+                const isSelfChat = myNumber === senderNumber;
+
+                if (isRecent && !isFromMe && !isSelfChat && content && !remoteJid.includes('@g.us')) {
+                    // RESOLVE LID TO PHONE FOR LOGGING (Saint Zilan Request)
+                    let logName = remoteJid;
+                    if (extractedPhone) {
+                        logName = `+${extractedPhone}`;
+                    } else if (remoteJid.includes('@lid')) {
+                        // Try resolving
+                        const resolved = await resolvePhoneFromLid(userId, remoteJid);
+                        if (resolved) logName = `+${resolved} (Resolved LID)`;
+                    }
+
+                    // console.log(`[AI] Processing msg from ${logName}...`);
                     try {
                         const settings = await getUserSettings(userId);
 
@@ -863,7 +1045,21 @@ async function connectToWhatsApp(userId) {
                             }
                         }
                     } catch (aiErr) {
-                        console.error('❌ [AI] AutoReply failed:', aiErr.message);
+                        console.error('❌ [AI] AutoReply Error Details:', {
+                            message: aiErr.message,
+                            stack: aiErr.stack,
+                            name: aiErr.name,
+                            code: aiErr.code
+                        });
+
+                        // Check if it's an API key or configuration issue
+                        if (aiErr.message?.includes('API') || aiErr.message?.includes('key') || aiErr.message?.includes('401') || aiErr.message?.includes('403')) {
+                            console.error('⚠️ [AI] Possible API Key Issue - Check .env file for OPENAI_API_KEY or n8n webhook URL');
+                        }
+
+                        if (aiErr.code === 'ECONNREFUSED' || aiErr.code === 'ENOTFOUND') {
+                            console.error('⚠️ [AI] Connection Error - Check if n8n service is running');
+                        }
                     }
                 }
 
@@ -874,7 +1070,8 @@ async function connectToWhatsApp(userId) {
 
         // 1. Handle New Messages (Realtime)
         sock.ev.on('messages.upsert', async m => {
-            console.log(`📨 [UPSERT] Received ${m.messages.length} messages`);
+            console.log(`📨 [UPSERT DEBUG] EVENT FIRED! Received ${m.messages.length} messages. Type: ${m.type}`);
+            console.log(`📨 [UPSERT DEBUG] Raw keys: ${m.messages.map(x => x.key.remoteJid).join(', ')}`);
             for (const msg of m.messages) {
                 await processIncomingMessage(msg);
             }
@@ -918,7 +1115,8 @@ async function connectToWhatsApp(userId) {
 
                             if (result) {
                                 console.log(`✅ [DB] Updated status to ${newStatus} for msg ${key.id}`);
-                                io.emit('message_status_update', {
+                                // ✅ EMIT TO SPECIFIC USER ROOM
+                                io.to(userId).emit('message_status_update', {
                                     messageId: key.id,
                                     status: newStatus,
                                     userId
@@ -935,7 +1133,8 @@ async function connectToWhatsApp(userId) {
                                         );
                                         if (retryResult) {
                                             console.log(`✅ [DB] RECOVERY: Updated status to ${newStatus} for msg ${key.id} after retry`);
-                                            io.emit('message_status_update', {
+                                            // ✅ EMIT TO SPECIFIC USER ROOM
+                                            io.to(userId).emit('message_status_update', {
                                                 messageId: key.id,
                                                 status: newStatus,
                                                 userId
@@ -964,9 +1163,9 @@ async function connectToWhatsApp(userId) {
 
 
 
-async function disconnectWhatsAppClient(userId) {
+async function disconnectWhatsAppClient(userId, restart = true) {
     if (!userId || userId === 'undefined') return;
-    console.log(`\n🚪 [DISCONNECT] Manual disconnect requested for user: ${userId}`);
+    console.log(`\n🚪 [DISCONNECT] Manual disconnect requested for user: ${userId} (Restart: ${restart})`);
 
 
     const sock = socketsMap.get(userId);
@@ -1014,8 +1213,10 @@ async function disconnectWhatsAppClient(userId) {
         console.error(`⚠️ [CLEANUP] Failed to delete auth files:`, e.message);
     }
 
-    console.log(`🔄 [RESTART] Initializing new session for user ${userId}...`);
-    setTimeout(() => connectToWhatsApp(userId), 1500);
+    if (restart) {
+        console.log(`🔄 [RESTART] Initializing new session for user ${userId}...`);
+        setTimeout(() => connectToWhatsApp(userId), 1500);
+    }
 }
 
 // ===========================================
@@ -1163,6 +1364,17 @@ async function sendReaction(userId, jid, key, emoji) {
         console.error('Error saving reaction optimistic:', e);
     }
 
+    // Emit Outgoing Message to All Clients (Realtime Sync for Multi-Tab)
+    try {
+        const io = getIO();
+        io.emit('new_message', {
+            userId,
+            message: newChat.toObject()
+        });
+    } catch (e) {
+        console.error('Socket emit error:', e);
+    }
+
     return sentMsg;
 }
 
@@ -1177,6 +1389,9 @@ function getQrCode(userId) {
 // ===========================================
 // GET PROFILE PICTURE
 // ===========================================
+// ===========================================
+// GET PROFILE PICTURE
+// ===========================================
 async function getProfilePicture(userId, jid) {
     const sock = socketsMap.get(userId);
     if (!sock) {
@@ -1185,39 +1400,61 @@ async function getProfilePicture(userId, jid) {
 
     // ✅ CACHE CHECK
     const cached = avatarCache.get(jid);
-    if (cached && (Date.now() - cached.timestamp < AVATAR_CACHE_TTL)) {
+    // Use stored TTL or default if not present (legacy compatibility)
+    const effectiveTTL = cached?.ttl || AVATAR_CACHE_TTL;
+    if (cached && (Date.now() - cached.timestamp < effectiveTTL)) {
         return cached.url;
     }
 
     try {
-        // Try to get high res first, fall back to low res
         let url;
-        // console.log(`🖼️ [PROFILE] Fetching for ${jid}...`);
+        console.log(`🔍 [PROFILE] Fetching URL for: ${jid}`);
+
+        // 1. Try High Res (With Timeout)
         try {
-            // Add Timeout Promise to prevent hanging forever
-            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 10000));
+            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 8000));
             url = await Promise.race([
                 sock.profilePictureUrl(jid, 'image'),
                 timeoutPromise
             ]);
         } catch (e) {
-            // console.warn(`⚠️ [PROFILE] High res failed for ${jid}: ${e.message}`);
-            // Fallback to preview or null immediately if timeout
+            console.log(`⚠️ [PROFILE] High-res failed for ${jid}: ${e.message}. Trying preview...`);
+            // 2. Fallback to Preview (Low Res)
             try {
-                url = await sock.profilePictureUrl(jid, 'preview');
-            } catch (e2) { }
+                const timeoutPromisePreview = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000));
+                url = await Promise.race([
+                    sock.profilePictureUrl(jid, 'preview'),
+                    timeoutPromisePreview
+                ]);
+            } catch (e2) {
+                // Completely failed (Privacy or 404)
+                console.log(`⚠️ [PROFILE] Failed all attempts for ${jid}: ${e2.message}`);
+            }
         }
 
-        // Save to cache even if null (to prevent spamming empty requests)
-        avatarCache.set(jid, { url: url || null, timestamp: Date.now() });
+        if (jid.includes('@lid') && !url) {
+            console.log(`⚠️ [PROFILE] LID Privacy/No Picture: ${jid}`);
+        } else if (!url) {
+            console.log(`❌ [PROFILE] No URL returned for: ${jid}`);
+        } else {
+            console.log(`✅ [PROFILE] Found URL for ${jid}`);
+        }
+
+        // ✅ SMART CACHING
+        // If successful, cache for full TTL.
+        // If failed (null), cache for specialized short TTL (e.g. 1 min) to allow retry
+        const ttl = url ? AVATAR_CACHE_TTL : 60 * 1000; // 1 minute for failures
+        avatarCache.set(jid, { url: url || null, timestamp: Date.now(), ttl });
 
         return url || null;
     } catch (err) {
-        // 404 or Privacy settings
-        // console.log(`⚠️ [Avatar] Failed for ${jid}: ${err.message}`);
+        console.error(`💥 [PROFILE] Critical Error for ${jid}:`, err.message);
         return null;
     }
 }
+
+
+
 
 function getStoreStats(userId) {
     checkDailyReset(userId);
@@ -1225,41 +1462,25 @@ function getStoreStats(userId) {
     const stats = statsMap.get(userId);
     const sock = socketsMap.get(userId);
 
-    if (!stats) {
-        return {
-            messagesToday: '0',
-            stats: {
-                messagesToday: '0',
-                sentToday: 0,
-                receivedToday: 0,
-                activeChats: '0',
-                responseTime: '0s',
-                successRate: '100%'
-            },
-            deviceInfo: null
-        };
+    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    // Default values for when stats are not available
+    let activeChats = '0';
+    let responseTime = '0s';
+    let successRate = '100%';
+    let deviceInfo = null;
+
+    if (stats) {
+        activeChats = Object.values(stats.chats).filter(chat => chat.lastActivity > oneDayAgo).length.toString();
+        responseTime = calculateAverageResponseTime(stats.responseTimes || []);
+        successRate = calculateSuccessRate(stats.deliveryStatus || { success: 0, failed: 0 });
     }
 
-    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    const activeChats = Object.values(stats.chats).filter(chat => chat.lastActivity > oneDayAgo).length.toString();
-
-    const responseTime = calculateAverageResponseTime(stats.responseTimes || []);
-    const successRate = calculateSuccessRate(stats.deliveryStatus || { success: 0, failed: 0 });
-
-    let deviceInfo = null;
-    if (statusMap.get(userId) === 'connected') {
-        const sock = socketsMap.get(userId);
-
-        // DEBUG: Log everything we know about the user
-        // console.log(`🔍 [DEBUG] User ${userId} Socket User:`, JSON.stringify(sock?.user, null, 2));
-        // console.log(`🔍 [DEBUG] User ${userId} Auth Me:`, JSON.stringify(sock?.authState?.creds?.me, null, 2));
-
+    if (statusMap.get(userId) === 'connected' && sock) {
         // Triangulate User ID/Number
         const rawId = sock?.user?.id || sock?.authState?.creds?.me?.id;
         const userIdWA = rawId ? rawId.split(':')[0] : 'Unknown';
 
         // Triangulate Name
-        // Baileys often puts the pushname in 'notify' or 'name' of the contact
         const rawName = sock?.user?.name || sock?.user?.notify || sock?.authState?.creds?.me?.name || 'WhatsApp User';
 
         // Filter out if name is just the phone number
@@ -1271,17 +1492,12 @@ function getStoreStats(userId) {
         const userName = (isNameSameAsNumber) ? 'WhatsApp User' : rawName;
 
         // Triangulate Platform
-        // "WhatsApp MD Client" is the default from our previous code, let's try to find the real one
-        // Note: interacting with the phone is required for some info to sync, but let's try available fields
-        // In multi-device, the platform might be in the device info of the session
         let platformName = 'Unknown Platform';
-
         if (sock?.user?.platform) {
             platformName = sock.user.platform;
         } else if (sock?.authState?.creds?.platform) {
             platformName = sock.authState.creds.platform;
-        } else if (userIdWA.length > 13) {
-            // Basic heuristic: Virtual numbers often different length, but hard to guess OS
+        } else if (userIdWA.length > 13) { // Basic heuristic: Virtual numbers often different length, but hard to guess OS
             platformName = 'Multi-Device';
         } else {
             platformName = 'WhatsApp Mobile';
@@ -1295,11 +1511,11 @@ function getStoreStats(userId) {
     }
 
     return {
-        messagesToday: (stats.sentToday + stats.receivedToday).toString(),
+        messagesToday: stats ? (stats.sentToday + stats.receivedToday).toString() : '0',
         stats: {
-            messagesToday: (stats.sentToday + stats.receivedToday).toString(),
-            sentToday: stats.sentToday,
-            receivedToday: stats.receivedToday,
+            messagesToday: stats ? (stats.sentToday + stats.receivedToday).toString() : '0',
+            sentToday: stats?.sentToday || 0,
+            receivedToday: stats?.receivedToday || 0,
             activeChats: activeChats,
             responseTime: responseTime,
             successRate: successRate
@@ -1393,7 +1609,20 @@ async function resolvePhoneFromLid(userId, lid) {
     if (!lid) return null;
 
     try {
-        // 1. Check Store (InMemory) - Most reliable for active session
+        // ✅ 0. OFFICIAL BAILEYS V7 WAY (The "Secret" Feature)
+        const sock = socketsMap.get(userId);
+        if (sock && sock.signalRepository && sock.signalRepository.lidMapping) {
+            const mapping = await sock.signalRepository.lidMapping.getPNForLID(lid);
+            if (mapping) {
+                // console.log(`🔍 [LID V7] Resolved ${lid} -> ${mapping}`);
+                // Ensure format
+                let phone = mapping.replace(/\D/g, '');
+                if (phone.startsWith('0')) phone = '62' + phone.substring(1);
+                return phone;
+            }
+        }
+
+        // 1. Check Store (InMemory) - Fallback
         const store = storesMap.get(userId);
         if (store && store.contacts) {
             // Direct ID match
@@ -1440,6 +1669,54 @@ async function resolvePhoneFromLid(userId, lid) {
     return null;
 }
 
+// ✅ NEW: Pairing Code Logic
+async function pairWithPhoneNumber(userId, phoneNumber) {
+    console.log(`🔌 [PAIRING] Starting pairing flow for ${userId} with ${phoneNumber}`);
+
+    // 1. Ensure any old session is gone
+    if (socketsMap.has(userId)) {
+        await disconnectWhatsAppClient(userId, false); // ✅ Don't restart, we will handle it
+        await new Promise(r => setTimeout(r, 2000)); // Wait for cleanup
+    }
+
+    // 2. Clear Auth Folder to ensure fresh start
+    const userAuthPath = path.join(BASE_AUTH_PATH, `user-${userId}`);
+    try {
+        if (fs.existsSync(userAuthPath)) {
+            fs.rmSync(userAuthPath, { recursive: true, force: true });
+        }
+    } catch (e) { }
+
+    // 3. Start Connection (QR Disabled)
+    connectToWhatsApp(userId);
+
+    // 4. Wait for Socket to be ready
+    let attempts = 0;
+    while (!socketsMap.has(userId) && attempts < 20) {
+        await new Promise(r => setTimeout(r, 500));
+        attempts++;
+    }
+
+    const sock = socketsMap.get(userId);
+    if (!sock) {
+        throw new Error('Failed to initialize socket for pairing');
+    }
+
+    // 5. Request Pairing Code
+    // Wait a bit for connection to be in 'connecting' state
+    await new Promise(r => setTimeout(r, 2000));
+
+    try {
+        console.log(`🔢 [PAIRING] Requesting code for ${phoneNumber}...`);
+        const code = await sock.requestPairingCode(phoneNumber);
+        console.log(`✅ [PAIRING] Code received: ${code}`);
+        return code;
+    } catch (err) {
+        console.error(`❌ [PAIRING] Request failed:`, err.message);
+        throw err;
+    }
+}
+
 module.exports = {
     connectToWhatsApp,
     disconnectWhatsAppClient,
@@ -1447,17 +1724,104 @@ module.exports = {
     sendReaction,
     getStatus,
     getQrCode,
-    getProfilePicture, // Export this
+    getProfilePicture,
     getStoreStats,
     autoConnectAllUsers,
+    pairWithPhoneNumber, // ✅ EXPORT
 
     cleanupAllConnections,
-    socketsMap, // ✅ Exporting this to allow direct access in route handlers
-    storesMap, // ✅ Export Store Map for Debug
-    resolvePhoneFromLid, // ✅ Exported for chat.js
+    socketsMap,
+    storesMap,
+    resolvePhoneFromLid,
+    downloadMedia: async (userId, remoteJid, msgId) => {
+        const store = storesMap.get(userId);
+        const sock = socketsMap.get(userId);
+        if (!store || !sock) throw new Error('Session not active');
+
+        // Load message from store
+        const msg = await store.loadMessage(remoteJid, msgId);
+        if (!msg) throw new Error('Message not found (might be too old or not synced)');
+
+        const { downloadMediaMessage } = require('@whiskeysockets/baileys');
+
+        // Download buffer
+        const buffer = await downloadMediaMessage(
+            msg,
+            'buffer',
+            {},
+            { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
+        );
+
+        if (!buffer) throw new Error('Download failed');
+
+        // Determine file type
+        const messageType = Object.keys(msg.message)[0];
+        let ext = '.bin';
+        let mime = '';
+
+        if (messageType === 'imageMessage') {
+            mime = msg.message.imageMessage.mimetype;
+            ext = '.jpg';
+        } else if (messageType === 'videoMessage') {
+            mime = msg.message.videoMessage.mimetype;
+            ext = '.mp4';
+        } else if (messageType === 'audioMessage') {
+            mime = msg.message.audioMessage.mimetype;
+            ext = '.ogg';
+        } else if (messageType === 'documentMessage') {
+            mime = msg.message.documentMessage.mimetype;
+            ext = mime.split('/')[1] || '.pdf';
+        } else if (messageType === 'stickerMessage') {
+            mime = msg.message.stickerMessage.mimetype;
+            ext = '.webp';
+        }
+
+        const fileName = `${msg.key.id}${ext}`;
+        const publicDir = path.join(__dirname, '../public/media');
+        if (!fs.existsSync(publicDir)) fs.mkdirSync(publicDir, { recursive: true });
+
+        const filePath = path.join(publicDir, fileName);
+        await writeFile(filePath, buffer);
+
+        // ✅ UPDATE DATABASE: Mark as downloaded
+        const ChatMessage = require('../models/ChatMessage');
+        await ChatMessage.updateOne(
+            { msgId: msgId },
+            {
+                mediaUrl: `/media/${fileName}`,
+                mediaPath: filePath,
+                mediaType: mime
+            }
+        );
+
+        return {
+            url: `/media/${fileName}`,
+            type: mime
+        };
+    },
+
     getContact: (userId, jid) => {
         const store = storesMap.get(userId);
         if (!store) return null;
         return store.contacts[jid]; // Return contact object { name, notify, etc }
+    },
+
+    getContactName: (userId, jid) => {
+        const store = storesMap.get(userId);
+        if (!store) return null;
+
+        const contact = store.contacts[jid];
+        // Debugging specific missing name
+        if (jid.includes('6281221829308')) {
+            // console.log(`🔍 [DEBUG NAME] Looking for ${jid}. Found:`, contact ? (contact.notify || contact.name) : 'NULL');
+        }
+
+        if (!contact) return null;
+        return contact.notify || contact.name || null;
+    },
+
+    // ✅ FIX: Export getStore function (was missing!)
+    getStore: (userId) => {
+        return storesMap.get(userId);
     }
 };

@@ -4,6 +4,7 @@ const express = require('express'); // Force Restart 31
 const mongoose = require('mongoose');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
+const compression = require('compression'); // ✅ OPTIMIZATION: GZIP
 const connectDB = require('./config/database');
 
 // Import utilities
@@ -63,8 +64,13 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
+// ✅ OPTIMIZATION: Compress all responses
+app.use(compression());
+
 // Serve Static Media
 app.use('/media', express.static(path.join(__dirname, 'public/media')));
+app.use(express.static(path.join(__dirname, '../public'))); // Serve uploaded media
+app.use(express.static(path.join(__dirname, '../frontend/build')));
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));

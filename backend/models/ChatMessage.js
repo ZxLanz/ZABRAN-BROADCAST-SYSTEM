@@ -2,8 +2,7 @@ const mongoose = require('mongoose');
 
 const chatMessageSchema = new mongoose.Schema({
     userId: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User',
+        type: String, // Storing JID directly (e.g. 628xxx@s.whatsapp.net)
         required: true,
         index: true
     },

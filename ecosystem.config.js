@@ -19,11 +19,12 @@ module.exports = {
         {
             name: "zabran-n8n",
             script: "C:\\Users\\Asus\\AppData\\Roaming\\npm\\node_modules\\n8n\\bin\\n8n",
+            interpreter: "node",
             args: "start",
             env: {
                 N8N_PORT: 5678,
             },
-            time: true, // ✅ Add Timestamps to Logs
+            time: true,
             log_date_format: "YYYY-MM-DD HH:mm:ss"
         }
     ]
